@@ -20,6 +20,7 @@ import fs from 'fs'
 import path from 'path'
 import crypto from 'crypto'
 import os from 'os'
+import QRCode from 'qrcode-terminal'
 
 // ---------------------------------------------------------------------------
 // Paths
@@ -138,14 +139,13 @@ Important:
 // WhatsApp connection
 // ---------------------------------------------------------------------------
 let sock: WASocket | null = null
-let qrDisplayed = false
 
 async function connectWhatsApp() {
   const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR)
 
   sock = makeWASocket({
     auth: state,
-    printQRInTerminal: true,
+    printQRInTerminal: false, // stdout is MCP transport, cannot print there
     browser: Browsers.ubuntu('Claude WhatsApp'),
     logger,
   })
@@ -158,8 +158,32 @@ async function connectWhatsApp() {
     const { connection, lastDisconnect, qr } = update
 
     if (qr) {
-      qrDisplayed = true
-      // QR is printed to terminal by Baileys via printQRInTerminal
+      // Save QR string to file so user can render it externally
+      const qrFile = path.join(CHANNEL_DIR, 'qr.txt')
+      fs.writeFileSync(qrFile, qr)
+
+      // Render QR to stderr (visible in terminal, does not corrupt MCP on stdout)
+      QRCode.generate(qr, { small: true }, (qrArt: string) => {
+        process.stderr.write('\n\n=== SCAN THIS QR CODE WITH WHATSAPP ===\n')
+        process.stderr.write('WhatsApp > Settings > Linked Devices > Link a Device\n\n')
+        process.stderr.write(qrArt)
+        process.stderr.write('\n========================================\n\n')
+      })
+
+      // Also notify Claude via MCP channel
+      mcp.notification({
+        method: 'notifications/claude/channel',
+        params: {
+          content: `WhatsApp QR code is ready! The user needs to scan it.\nQR code is displayed in the terminal (stderr) and saved at: ${qrFile}\nTell the user to look at their terminal and scan the QR code with WhatsApp > Settings > Linked Devices > Link a Device.`,
+          meta: {
+            chat_id: 'system',
+            message_id: 'qr-' + Date.now(),
+            user: 'system',
+            user_id: 'system',
+            ts: new Date().toISOString(),
+          },
+        },
+      })
     }
 
     if (connection === 'close') {
@@ -178,7 +202,20 @@ async function connectWhatsApp() {
     }
 
     if (connection === 'open') {
-      qrDisplayed = false
+      // Notify Claude that WhatsApp is connected
+      mcp.notification({
+        method: 'notifications/claude/channel',
+        params: {
+          content: 'WhatsApp connected successfully! Ready to receive messages.',
+          meta: {
+            chat_id: 'system',
+            message_id: 'connected-' + Date.now(),
+            user: 'system',
+            user_id: 'system',
+            ts: new Date().toISOString(),
+          },
+        },
+      })
     }
   })
 
@@ -648,11 +685,11 @@ process.on('SIGINT', shutdown)
 // Start
 // ---------------------------------------------------------------------------
 async function main() {
-  // Start WhatsApp connection
-  await connectWhatsApp()
-
-  // Start MCP server on stdio
+  // Start MCP server FIRST (uses stdout for protocol)
   await mcp.connect(new StdioServerTransport())
+
+  // Then start WhatsApp connection (notifications require MCP to be ready)
+  await connectWhatsApp()
 }
 
 main().catch((err) => {
