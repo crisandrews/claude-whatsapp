@@ -157,24 +157,38 @@ async function connectWhatsApp(phoneNumber?: string) {
   if (phoneNumber && !state.creds.registered) {
     waitingForPairing = true
     try {
-      await new Promise((r) => setTimeout(r, 3000))
+      await new Promise((r) => setTimeout(r, 4000))
       const phoneClean = phoneNumber.replace(/[^0-9]/g, '')
       const code = await sock.requestPairingCode(phoneClean)
-      mcp.notification({
-        method: 'notifications/claude/channel',
-        params: {
-          content: `WhatsApp pairing code: *${code}*\n\nTell the user to enter this code in WhatsApp:\n1. Open WhatsApp on their phone\n2. Go to Settings > Linked Devices > Link a Device\n3. Tap "Link with phone number instead"\n4. Enter phone: ${phoneNumber}\n5. Enter code: ${code}\n\nThe code expires in about 60 seconds. Do NOT request another code — just enter this one.`,
-          meta: {
-            chat_id: 'system',
-            message_id: 'pairing-code-' + Date.now(),
-            user: 'system',
-            user_id: 'system',
-            ts: new Date().toISOString(),
+
+      // Write code to file so the skill can poll and read it
+      const PAIRING_CODE_FILE = path.join(CHANNEL_DIR, 'pairing_code.json')
+      fs.writeFileSync(PAIRING_CODE_FILE, JSON.stringify({
+        code,
+        phoneNumber,
+        createdAt: Date.now(),
+      }))
+
+      // Also try MCP notification (may not work in all contexts)
+      try {
+        mcp.notification({
+          method: 'notifications/claude/channel',
+          params: {
+            content: `WhatsApp pairing code: ${code} — Enter it in WhatsApp > Settings > Linked Devices > Link a Device > "Link with phone number instead"`,
+            meta: {
+              chat_id: 'system',
+              message_id: 'pairing-code-' + Date.now(),
+              user: 'system',
+              user_id: 'system',
+              ts: new Date().toISOString(),
+            },
           },
-        },
-      })
+        })
+      } catch { /* MCP notification may fail */ }
     } catch {
-      // Pairing code request can fail transiently — don't spam errors
+      // Pairing code request can fail transiently
+      const ERROR_FILE = path.join(CHANNEL_DIR, 'pairing_code.json')
+      fs.writeFileSync(ERROR_FILE, JSON.stringify({ error: 'Failed to request pairing code. Try again.' }))
     }
   }
 
