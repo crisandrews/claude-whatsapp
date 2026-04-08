@@ -1,10 +1,11 @@
 ---
 name: configure
-description: Set up the WhatsApp channel connection. Run without arguments to see current status, or use 'reset' to clear the session and re-scan the QR code.
+description: Set up the WhatsApp channel connection. Use 'connect <phone>' to connect via pairing code, or 'reset' to clear the session.
 allowed-tools:
   - Bash
   - Read
   - Write
+  - mcp__whatsapp__connect
 ---
 
 # WhatsApp Configure
@@ -13,7 +14,20 @@ You are helping the user configure the WhatsApp channel plugin for Claude Code.
 
 ## What to do
 
-The WhatsApp plugin uses Baileys to connect directly to WhatsApp Web via QR code scanning. No bot token or API key is needed.
+The WhatsApp plugin uses Baileys to connect directly to WhatsApp Web. No bot token or API key is needed.
+
+### Connect with phone number (recommended)
+
+If the user runs `/whatsapp:configure connect <phone_number>`:
+
+1. Use the `connect` MCP tool with the provided phone number (include country code, e.g. +56912345678)
+2. The tool will return an 8-digit pairing code
+3. Tell the user to:
+   - Open WhatsApp on their phone
+   - Go to Settings > Linked Devices > Link a Device
+   - Tap "Link with phone number instead"
+   - Enter their phone number
+   - Enter the 8-digit pairing code
 
 ### Check status
 
@@ -25,6 +39,7 @@ If the user runs `/whatsapp:configure` with no arguments:
    - Whether a WhatsApp session is configured (auth files exist)
    - The current DM policy (from access.json)
    - How many users are in the allowlist
+4. If not connected, tell the user to run `/whatsapp:configure connect <phone_number>`
 
 ### Reset session
 
@@ -32,20 +47,13 @@ If the user runs `/whatsapp:configure reset`:
 
 1. Delete the auth directory at `~/.claude/channels/whatsapp/auth/`
 2. Recreate it empty
-3. Tell the user to restart Claude Code with `claude --channels plugin:whatsapp` to scan a new QR code
+3. Tell the user they can reconnect with `/whatsapp:configure connect <phone_number>`
 
-### First-time setup
+### QR code fallback
 
-If no auth state exists, guide the user:
-
-1. Start Claude Code with: `claude --channels plugin:whatsapp`
-2. A QR code will appear in the terminal
-3. Open WhatsApp on your phone > Settings > Linked Devices > Link a Device
-4. Scan the QR code
-5. Once connected, anyone who messages will receive a pairing code
-6. Use `/whatsapp:access pair <code>` to approve them
+A QR code image is also generated automatically at `~/.claude/channels/whatsapp/qr.png` and opened with the system image viewer. The user can scan it with WhatsApp if they prefer.
 
 ## Important
 
 - The auth state at `~/.claude/channels/whatsapp/auth/` contains sensitive session keys. Never display their contents.
-- WhatsApp Web sessions can expire. If the connection drops with a "logged out" status, the auth will be auto-cleared and a new QR scan will be needed.
+- WhatsApp Web sessions can expire. If the connection drops with a "logged out" status, the auth will be auto-cleared and reconnection will be needed.
