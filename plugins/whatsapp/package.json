@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "npm install --silent && npx tsx server.ts"
+    "start": "npm install --silent >/dev/null 2>&1; exec npx tsx server.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
