@@ -1,0 +1,6 @@
+{
+  "name": "whatsapp",
+  "description": "WhatsApp channel for Claude Code — messaging bridge via QR code with built-in access control.",
+  "version": "0.0.1",
+  "keywords": ["whatsapp", "messaging", "channel", "mcp", "baileys"]
+}
