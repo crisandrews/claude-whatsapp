@@ -7,6 +7,8 @@ allowed-tools:
   - Bash(mkdir *)
   - Bash(rm *)
   - Bash(open *)
+  - Bash(sleep *)
+  - Bash(cat *)
   - Read
 ---
 
@@ -18,42 +20,51 @@ Arguments passed: `$ARGUMENTS`
 
 ## Commands
 
-### No arguments — open QR and connect
+### No arguments — setup / open QR
 
-This is the main setup flow. Do these steps in order:
+This is the main setup flow:
 
-1. Check if `~/.claude/channels/whatsapp/status.json` exists and read it.
+1. **Check if the server is ready.** Run: `ls ~/.claude/channels/whatsapp/status.json 2>/dev/null`
 
-2. **If status is `connected`**: Tell the user "WhatsApp is already connected! People can message your number and Claude will respond." Then check `~/.claude/channels/whatsapp/access.json` and show DM policy and allowed users.
+2. **If the directory or status.json don't exist yet**, the server is still starting up (first launch installs dependencies which takes ~30 seconds). Tell the user:
+   "Server is starting up and installing dependencies... this only happens the first time."
+   Then poll in a loop:
+   - `sleep 5` then check again: `ls ~/.claude/channels/whatsapp/status.json 2>/dev/null`
+   - Repeat up to 6 times (30 seconds total)
+   - Between each check, tell the user "Still waiting..." 
+   - If after 6 attempts it still doesn't exist, tell the user: "Server didn't start. Try closing Claude and reopening with `claude --dangerously-load-development-channels plugin:whatsapp@claude-whatsapp`"
 
-3. **If status is `qr_ready` or file doesn't exist**: Check if `~/.claude/channels/whatsapp/qr.png` exists.
-   - If the QR file exists: Open it with `open ~/.claude/channels/whatsapp/qr.png` and tell the user:
+3. **Once status.json exists**, read it with: `cat ~/.claude/channels/whatsapp/status.json`
+
+4. **Based on status:**
+   - `connected`: Tell the user "WhatsApp is connected and ready! People can message your number and Claude will respond." Then read and show `~/.claude/channels/whatsapp/access.json` if it exists.
+   - `qr_ready`: Check that `~/.claude/channels/whatsapp/qr.png` exists, then open it: `open ~/.claude/channels/whatsapp/qr.png` and tell the user:
      ```
-     QR code opened! Scan it now with your phone:
-     1. Open WhatsApp
-     2. Settings > Linked Devices > Link a Device  
-     3. Point your camera at the QR code on screen
+     QR code opened! Scan it now:
+     1. Open WhatsApp on your phone
+     2. Settings > Linked Devices > Link a Device
+     3. Point your camera at the QR code
      
-     The QR refreshes automatically. If it expires, run /whatsapp:configure again.
+     If the QR expired, run /whatsapp:configure again.
+     After scanning, run /whatsapp:configure to verify the connection.
      ```
-   - If QR doesn't exist: Tell the user "The server is still starting up. Wait a few seconds and run `/whatsapp:configure` again."
-
-4. **If status is `logged_out` or `reconnecting`**: Tell the user to run `/whatsapp:configure reset` and then `/whatsapp:configure` again.
+   - `qr_error`: Tell user to run `/whatsapp:configure reset` and try again.
+   - `logged_out`: Tell user to run `/whatsapp:configure reset`.
+   - `reconnecting`: Tell user "Server is reconnecting... wait a moment and run `/whatsapp:configure` again."
 
 ### `reset` — clear session
 
 1. `rm -rf ~/.claude/channels/whatsapp/auth && mkdir -p ~/.claude/channels/whatsapp/auth`
 2. `rm -f ~/.claude/channels/whatsapp/status.json`
 3. `rm -f ~/.claude/channels/whatsapp/qr.png`
-4. Tell user: "Session cleared. Run `/whatsapp:configure` to scan a new QR code."
+4. Tell user: "Session cleared. Run `/whatsapp:configure` to get a new QR code."
 
-### `status` — check connection status only
+### `status` — check connection only
 
-1. Read `~/.claude/channels/whatsapp/status.json` and report the current state.
-2. Read `~/.claude/channels/whatsapp/access.json` if it exists — report DM policy and allowed users count.
+1. Read `~/.claude/channels/whatsapp/status.json` and report the state.
+2. Read `~/.claude/channels/whatsapp/access.json` if it exists — show DM policy and allowed users count.
 
 ## Important
 
-- Never display contents of auth files — they contain sensitive session keys.
-- The QR code refreshes every ~20 seconds. The server overwrites `qr.png` each time.
-- After scanning successfully, the status changes to `connected` and `qr.png` is deleted.
+- Never display contents of auth files.
+- The QR refreshes every ~20 seconds. The server overwrites `qr.png` automatically.
