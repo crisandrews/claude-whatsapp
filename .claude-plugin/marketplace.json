@@ -1,0 +1,13 @@
+{
+  "name": "claude-whatsapp",
+  "owner": {
+    "name": "crisandrews"
+  },
+  "plugins": [
+    {
+      "name": "whatsapp",
+      "source": ".",
+      "description": "WhatsApp channel for Claude Code — scan QR, chat with Claude via WhatsApp"
+    }
+  ]
+}
