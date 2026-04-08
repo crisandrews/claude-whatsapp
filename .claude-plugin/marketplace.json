@@ -1,13 +1,16 @@
 {
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "claude-whatsapp",
+  "description": "WhatsApp channel plugin for Claude Code",
   "owner": {
     "name": "crisandrews"
   },
   "plugins": [
     {
       "name": "whatsapp",
-      "source": ".",
-      "description": "WhatsApp channel for Claude Code — scan QR, chat with Claude via WhatsApp"
+      "description": "WhatsApp messaging bridge — scan QR, chat with Claude via WhatsApp, built-in access control.",
+      "category": "productivity",
+      "source": "./plugins/whatsapp"
     }
   ]
 }
