@@ -4,14 +4,14 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "bun install --no-summary && bun server.ts"
+    "start": "npm install --silent && npx tsx server.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
-    "@whiskeysockets/baileys": "^7.0.0-rc.9",
+    "@whiskeysockets/baileys": "github:WhiskeySockets/Baileys",
     "@hapi/boom": "^9.1.3",
     "pino": "^9.6.0",
     "qrcode": "^1.5.4",
-    "qrcode-terminal": "^0.12.0"
+    "tsx": "^4.19.0"
   }
 }
