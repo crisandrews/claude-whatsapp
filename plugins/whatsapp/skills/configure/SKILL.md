@@ -1,6 +1,6 @@
 ---
 name: configure
-description: Check WhatsApp channel status or reset the session to re-scan the QR code.
+description: Connect WhatsApp by scanning a QR code. Run this after starting Claude with the whatsapp channel to set up your connection.
 user-invocable: true
 allowed-tools:
   - Bash(ls *)
@@ -16,37 +16,44 @@ allowed-tools:
 
 Arguments passed: `$ARGUMENTS`
 
-## How WhatsApp connection works
-
-When Claude Code starts with `--channels plugin:whatsapp@claude-whatsapp`, the MCP server
-automatically connects to WhatsApp and opens a QR code image on the user's screen.
-The user scans it with WhatsApp > Settings > Linked Devices > Link a Device.
-
-No manual configuration is needed — the QR appears automatically at startup.
-
 ## Commands
 
-### No arguments — check status
+### No arguments — open QR and connect
 
-1. Check if `~/.claude/channels/whatsapp/status.json` exists and read it — shows current connection state
-2. Check if `~/.claude/channels/whatsapp/auth/creds.json` exists — if yes, a session exists
-3. Read `~/.claude/channels/whatsapp/access.json` if it exists — report DM policy and allowed users
-4. If status is `qr_ready`: tell user "A QR code should be open on your screen. Scan it with WhatsApp. If you don't see it, run `/whatsapp:configure show-qr`"
-5. If status is `connected`: tell user "WhatsApp is connected and ready!"
-6. If not connected: tell user to restart Claude with the channels flag
+This is the main setup flow. Do these steps in order:
 
-### `show-qr` — re-open the QR code
+1. Check if `~/.claude/channels/whatsapp/status.json` exists and read it.
 
-1. Run: `open ~/.claude/channels/whatsapp/qr.png`
-2. Tell the user to scan it with WhatsApp > Settings > Linked Devices > Link a Device
+2. **If status is `connected`**: Tell the user "WhatsApp is already connected! People can message your number and Claude will respond." Then check `~/.claude/channels/whatsapp/access.json` and show DM policy and allowed users.
 
-### `reset` — clear session and reconnect
+3. **If status is `qr_ready` or file doesn't exist**: Check if `~/.claude/channels/whatsapp/qr.png` exists.
+   - If the QR file exists: Open it with `open ~/.claude/channels/whatsapp/qr.png` and tell the user:
+     ```
+     QR code opened! Scan it now with your phone:
+     1. Open WhatsApp
+     2. Settings > Linked Devices > Link a Device  
+     3. Point your camera at the QR code on screen
+     
+     The QR refreshes automatically. If it expires, run /whatsapp:configure again.
+     ```
+   - If QR doesn't exist: Tell the user "The server is still starting up. Wait a few seconds and run `/whatsapp:configure` again."
+
+4. **If status is `logged_out` or `reconnecting`**: Tell the user to run `/whatsapp:configure reset` and then `/whatsapp:configure` again.
+
+### `reset` — clear session
 
 1. `rm -rf ~/.claude/channels/whatsapp/auth && mkdir -p ~/.claude/channels/whatsapp/auth`
 2. `rm -f ~/.claude/channels/whatsapp/status.json`
-3. Tell user to restart Claude Code to get a new QR code
+3. `rm -f ~/.claude/channels/whatsapp/qr.png`
+4. Tell user: "Session cleared. Run `/whatsapp:configure` to scan a new QR code."
+
+### `status` — check connection status only
+
+1. Read `~/.claude/channels/whatsapp/status.json` and report the current state.
+2. Read `~/.claude/channels/whatsapp/access.json` if it exists — report DM policy and allowed users count.
 
 ## Important
 
 - Never display contents of auth files — they contain sensitive session keys.
-- The QR code refreshes every ~20 seconds. If it expires, just re-open the image — the server updates it.
+- The QR code refreshes every ~20 seconds. The server overwrites `qr.png` each time.
+- After scanning successfully, the status changes to `connected` and `qr.png` is deleted.

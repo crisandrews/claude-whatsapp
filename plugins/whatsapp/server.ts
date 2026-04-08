@@ -21,7 +21,6 @@ import path from 'path'
 import crypto from 'crypto'
 import os from 'os'
 import QRCode from 'qrcode'
-import { exec } from 'child_process'
 
 // ---------------------------------------------------------------------------
 // Paths
@@ -165,31 +164,13 @@ async function connectWhatsApp() {
     const { connection, lastDisconnect, qr } = update
 
     if (qr) {
-      // Generate QR as PNG and open it with system viewer
+      // Save QR as PNG — the /whatsapp:configure skill opens it for the user
       try {
         await QRCode.toFile(QR_IMAGE_PATH, qr, { width: 512, margin: 2 })
-        exec(`open "${QR_IMAGE_PATH}"`) // macOS
         writeStatus('qr_ready', { qrPath: QR_IMAGE_PATH })
       } catch {
         writeStatus('qr_error')
       }
-
-      // Notify Claude
-      try {
-        mcp.notification({
-          method: 'notifications/claude/channel',
-          params: {
-            content: `WhatsApp QR code opened! Scan it with WhatsApp > Settings > Linked Devices > Link a Device. QR image: ${QR_IMAGE_PATH}`,
-            meta: {
-              chat_id: 'system',
-              message_id: 'qr-' + Date.now(),
-              user: 'system',
-              user_id: 'system',
-              ts: new Date().toISOString(),
-            },
-          },
-        })
-      } catch { /* MCP not ready yet */ }
     }
 
     if (connection === 'close') {
