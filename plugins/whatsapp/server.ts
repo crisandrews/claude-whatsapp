@@ -489,11 +489,18 @@ setInterval(async () => {
 
     lastConnectAttempt = now
 
+    // IMPORTANT: set flag BEFORE closing old socket to prevent its
+    // close handler from auto-reconnecting without phone number
+    waitingForPairing = true
+
     // Disconnect existing socket
     if (sock) {
       sock.end(undefined)
       sock = null
     }
+
+    // Small delay to let old socket fully close
+    await new Promise((r) => setTimeout(r, 1000))
 
     // Fresh auth for pairing
     fs.rmSync(AUTH_DIR, { recursive: true, force: true })
