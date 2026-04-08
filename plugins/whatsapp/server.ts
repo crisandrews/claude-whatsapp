@@ -462,6 +462,33 @@ async function handlePairing(senderId: string, chatId: string) {
 }
 
 // ---------------------------------------------------------------------------
+// Poll connect.json for pairing code requests (written by skill)
+// ---------------------------------------------------------------------------
+const CONNECT_FILE = path.join(CHANNEL_DIR, 'connect.json')
+
+setInterval(async () => {
+  try {
+    if (!fs.existsSync(CONNECT_FILE)) return
+    const data = JSON.parse(fs.readFileSync(CONNECT_FILE, 'utf8'))
+    fs.unlinkSync(CONNECT_FILE) // consume immediately
+
+    const { phoneNumber } = data
+    if (!phoneNumber) return
+
+    // Need to reconnect with fresh auth for pairing code
+    if (sock) {
+      sock.end(undefined)
+      sock = null
+    }
+    fs.rmSync(AUTH_DIR, { recursive: true, force: true })
+    fs.mkdirSync(AUTH_DIR, { recursive: true })
+
+    pendingPhoneNumber = phoneNumber
+    await connectWhatsApp()
+  } catch { /* ignore parse errors */ }
+}, 2000)
+
+// ---------------------------------------------------------------------------
 // Poll approved/ directory for completed pairings
 // ---------------------------------------------------------------------------
 setInterval(async () => {
