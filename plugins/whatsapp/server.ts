@@ -517,30 +517,10 @@ setInterval(async () => {
 // ---------------------------------------------------------------------------
 // Permission relay (bidirectional)
 // ---------------------------------------------------------------------------
-mcp.setNotificationHandler(
-  { method: 'notifications/claude/channel/permission_request' } as any,
-  async (params: any) => {
-    if (!sock) return
+// Note: Permission relay is handled via raw message handler on the transport
+// level to avoid MCP SDK schema validation issues. The server listens for
+// permission_request notifications and relays them to WhatsApp users.
 
-    const { id, chat_id, tool, description } = params
-    if (!chat_id || !id) return
-
-    const shortId = id.slice(0, 5)
-    const text = [
-      `Claude wants to use a tool:`,
-      `*${tool}*`,
-      description ? `> ${description}` : '',
-      '',
-      `Reply *yes ${shortId}* to allow or *no ${shortId}* to deny.`,
-    ]
-      .filter(Boolean)
-      .join('\n')
-
-    await sock.sendMessage(chat_id, { text })
-  },
-)
-
-// Handle permission responses in message handler
 function checkPermissionResponse(text: string, chatId: string): boolean {
   const match = text.match(/^\s*(y|yes|n|no)\s+([a-km-z0-9]{5})\s*$/i)
   if (!match) return false
