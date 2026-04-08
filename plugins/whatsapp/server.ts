@@ -140,10 +140,14 @@ Important:
 // WhatsApp connection
 // ---------------------------------------------------------------------------
 let sock: WASocket | null = null
-let waitingForPairing = false  // true while waiting for user to enter pairing code
 const QR_IMAGE_PATH = path.join(CHANNEL_DIR, 'qr.png')
+const STATUS_FILE = path.join(CHANNEL_DIR, 'status.json')
 
-async function connectWhatsApp(phoneNumber?: string) {
+function writeStatus(status: string, details?: Record<string, any>) {
+  fs.writeFileSync(STATUS_FILE, JSON.stringify({ status, ...details, ts: Date.now() }))
+}
+
+async function connectWhatsApp() {
   const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR)
 
   sock = makeWASocket({
@@ -153,45 +157,6 @@ async function connectWhatsApp(phoneNumber?: string) {
     logger,
   })
 
-  // If phone number provided, request pairing code instead of QR
-  if (phoneNumber && !state.creds.registered) {
-    waitingForPairing = true
-    try {
-      await new Promise((r) => setTimeout(r, 4000))
-      const phoneClean = phoneNumber.replace(/[^0-9]/g, '')
-      const code = await sock.requestPairingCode(phoneClean)
-
-      // Write code to file so the skill can poll and read it
-      const PAIRING_CODE_FILE = path.join(CHANNEL_DIR, 'pairing_code.json')
-      fs.writeFileSync(PAIRING_CODE_FILE, JSON.stringify({
-        code,
-        phoneNumber,
-        createdAt: Date.now(),
-      }))
-
-      // Also try MCP notification (may not work in all contexts)
-      try {
-        mcp.notification({
-          method: 'notifications/claude/channel',
-          params: {
-            content: `WhatsApp pairing code: ${code} — Enter it in WhatsApp > Settings > Linked Devices > Link a Device > "Link with phone number instead"`,
-            meta: {
-              chat_id: 'system',
-              message_id: 'pairing-code-' + Date.now(),
-              user: 'system',
-              user_id: 'system',
-              ts: new Date().toISOString(),
-            },
-          },
-        })
-      } catch { /* MCP notification may fail */ }
-    } catch {
-      // Pairing code request can fail transiently
-      const ERROR_FILE = path.join(CHANNEL_DIR, 'pairing_code.json')
-      fs.writeFileSync(ERROR_FILE, JSON.stringify({ error: 'Failed to request pairing code. Try again.' }))
-    }
-  }
-
   // Save credentials on update
   sock.ev.on('creds.update', saveCreds)
 
@@ -199,66 +164,67 @@ async function connectWhatsApp(phoneNumber?: string) {
   sock.ev.on('connection.update', async (update) => {
     const { connection, lastDisconnect, qr } = update
 
-    if (qr && !waitingForPairing) {
-      // Only show QR if we're NOT using the pairing code method
+    if (qr) {
+      // Generate QR as PNG and open it with system viewer
       try {
         await QRCode.toFile(QR_IMAGE_PATH, qr, { width: 512, margin: 2 })
-        const openCmd = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open'
-        exec(`${openCmd} "${QR_IMAGE_PATH}"`)
-      } catch { /* QR image generation failed */ }
+        exec(`open "${QR_IMAGE_PATH}"`) // macOS
+        writeStatus('qr_ready', { qrPath: QR_IMAGE_PATH })
+      } catch {
+        writeStatus('qr_error')
+      }
 
-      mcp.notification({
-        method: 'notifications/claude/channel',
-        params: {
-          content: `WhatsApp QR code opened on screen (also at: ${QR_IMAGE_PATH}).\nScan with WhatsApp > Settings > Linked Devices > Link a Device.\nOr use pairing code: /whatsapp:configure connect <phone_number>`,
-          meta: {
-            chat_id: 'system',
-            message_id: 'qr-' + Date.now(),
-            user: 'system',
-            user_id: 'system',
-            ts: new Date().toISOString(),
+      // Notify Claude
+      try {
+        mcp.notification({
+          method: 'notifications/claude/channel',
+          params: {
+            content: `WhatsApp QR code opened! Scan it with WhatsApp > Settings > Linked Devices > Link a Device. QR image: ${QR_IMAGE_PATH}`,
+            meta: {
+              chat_id: 'system',
+              message_id: 'qr-' + Date.now(),
+              user: 'system',
+              user_id: 'system',
+              ts: new Date().toISOString(),
+            },
           },
-        },
-      })
+        })
+      } catch { /* MCP not ready yet */ }
     }
 
     if (connection === 'close') {
       const statusCode = (lastDisconnect?.error as Boom)?.output?.statusCode
-
-      // While waiting for pairing, don't auto-reconnect (would generate new codes)
-      if (waitingForPairing) {
-        // Pairing failed or timed out — just wait for user to retry via skill
-        waitingForPairing = false
-        return
-      }
-
       const shouldReconnect = statusCode !== DisconnectReason.loggedOut
+
       if (shouldReconnect) {
+        writeStatus('reconnecting')
         setTimeout(() => connectWhatsApp(), 5000)
       } else {
+        writeStatus('logged_out')
         fs.rmSync(AUTH_DIR, { recursive: true, force: true })
         fs.mkdirSync(AUTH_DIR, { recursive: true })
-        // Don't auto-reconnect on logout — wait for user to re-configure
       }
     }
 
     if (connection === 'open') {
-      waitingForPairing = false
       try { fs.unlinkSync(QR_IMAGE_PATH) } catch {}
+      writeStatus('connected')
 
-      mcp.notification({
-        method: 'notifications/claude/channel',
-        params: {
-          content: 'WhatsApp connected successfully! Ready to receive and send messages.',
-          meta: {
-            chat_id: 'system',
-            message_id: 'connected-' + Date.now(),
-            user: 'system',
-            user_id: 'system',
-            ts: new Date().toISOString(),
+      try {
+        mcp.notification({
+          method: 'notifications/claude/channel',
+          params: {
+            content: 'WhatsApp connected successfully! Ready to receive and send messages.',
+            meta: {
+              chat_id: 'system',
+              message_id: 'connected-' + Date.now(),
+              user: 'system',
+              user_id: 'system',
+              ts: new Date().toISOString(),
+            },
           },
-        },
-      })
+        })
+      } catch { /* MCP notification may fail */ }
     }
   })
 
@@ -465,52 +431,6 @@ async function handlePairing(senderId: string, chatId: string) {
 }
 
 // ---------------------------------------------------------------------------
-// Poll connect.json for pairing code requests (written by skill)
-// ---------------------------------------------------------------------------
-const CONNECT_FILE = path.join(CHANNEL_DIR, 'connect.json')
-let lastConnectAttempt = 0
-
-setInterval(async () => {
-  try {
-    if (!fs.existsSync(CONNECT_FILE)) return
-
-    // Cooldown: ignore if we attempted less than 30 seconds ago
-    const now = Date.now()
-    if (now - lastConnectAttempt < 30_000) {
-      fs.unlinkSync(CONNECT_FILE) // consume but ignore
-      return
-    }
-
-    const data = JSON.parse(fs.readFileSync(CONNECT_FILE, 'utf8'))
-    fs.unlinkSync(CONNECT_FILE) // consume immediately
-
-    const { phoneNumber } = data
-    if (!phoneNumber) return
-
-    lastConnectAttempt = now
-
-    // IMPORTANT: set flag BEFORE closing old socket to prevent its
-    // close handler from auto-reconnecting without phone number
-    waitingForPairing = true
-
-    // Disconnect existing socket
-    if (sock) {
-      sock.end(undefined)
-      sock = null
-    }
-
-    // Small delay to let old socket fully close
-    await new Promise((r) => setTimeout(r, 1000))
-
-    // Fresh auth for pairing
-    fs.rmSync(AUTH_DIR, { recursive: true, force: true })
-    fs.mkdirSync(AUTH_DIR, { recursive: true })
-
-    await connectWhatsApp(phoneNumber)
-  } catch { /* ignore parse errors */ }
-}, 3000)
-
-// ---------------------------------------------------------------------------
 // Poll approved/ directory for completed pairings
 // ---------------------------------------------------------------------------
 setInterval(async () => {
@@ -567,21 +487,6 @@ function checkPermissionResponse(text: string, chatId: string): boolean {
 // ---------------------------------------------------------------------------
 mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
-    {
-      name: 'connect',
-      description:
-        'Connect to WhatsApp using a pairing code. Provide a phone number (with country code, e.g. +56912345678) and get an 8-digit code to enter in WhatsApp.',
-      inputSchema: {
-        type: 'object' as const,
-        properties: {
-          phone_number: {
-            type: 'string',
-            description: 'Phone number with country code (e.g. +56912345678)',
-          },
-        },
-        required: ['phone_number'],
-      },
-    },
     {
       name: 'reply',
       description:
@@ -653,29 +558,6 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
   const args = req.params.arguments as Record<string, string>
 
   switch (req.params.name) {
-    case 'connect': {
-      const { phone_number } = args
-      const phoneClean = phone_number.replace(/[^0-9]/g, '')
-
-      if (phoneClean.length < 8) {
-        return { content: [{ type: 'text', text: 'Invalid phone number. Include country code, e.g. +56912345678' }] }
-      }
-
-      if (sock?.user) {
-        return { content: [{ type: 'text', text: `Already connected as ${sock.user.name || sock.user.id}` }] }
-      }
-
-      // Write connect.json — the polling loop will handle connection
-      fs.writeFileSync(CONNECT_FILE, JSON.stringify({ phoneNumber: phone_number }))
-
-      return {
-        content: [{
-          type: 'text',
-          text: `Connection requested for ${phone_number}. A pairing code will appear as a channel message shortly. The user should enter it in WhatsApp > Settings > Linked Devices > Link a Device > "Link with phone number instead".`,
-        }],
-      }
-    }
-
     case 'reply': {
       if (!sock) throw new Error('WhatsApp is not connected')
 
