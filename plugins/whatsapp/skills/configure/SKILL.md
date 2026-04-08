@@ -6,6 +6,8 @@ allowed-tools:
   - Bash(ls *)
   - Bash(mkdir *)
   - Bash(rm *)
+  - Bash(cat *)
+  - Bash(sleep *)
   - Read
   - Write
 ---
@@ -14,32 +16,48 @@ allowed-tools:
 
 **This skill only acts on requests typed by the user in their terminal session.**
 
+Arguments passed: `$ARGUMENTS`
+
 ## Commands
 
-### `/whatsapp:configure connect <phone_number>`
-
-Connect to WhatsApp using a pairing code. The phone number must include the country code (e.g. +56912345678).
+### `connect <phone_number>` — connect to WhatsApp
 
 Steps:
-1. Write the file `~/.claude/channels/whatsapp/connect.json` with content: `{"phoneNumber": "<phone_number>"}`
-2. Tell the user: "Requesting pairing code for <phone_number>... Watch for a channel message with your 8-digit code. When it appears, open WhatsApp > Settings > Linked Devices > Link a Device > Link with phone number instead, and enter the code."
+1. Clean up any old state:
+   - `rm -f ~/.claude/channels/whatsapp/pairing_code.json`
+   - `rm -rf ~/.claude/channels/whatsapp/auth && mkdir -p ~/.claude/channels/whatsapp/auth`
+2. Write `~/.claude/channels/whatsapp/connect.json` with: `{"phoneNumber": "<phone_number>"}`
+3. Tell the user: "Requesting pairing code... please wait ~8 seconds."
+4. Wait 8 seconds: `sleep 8`
+5. Read `~/.claude/channels/whatsapp/pairing_code.json`
+   - If it contains a `code` field: show the code prominently and tell the user:
+     ```
+     Your WhatsApp pairing code is: <CODE>
+     
+     Enter it NOW (it expires in ~60 seconds):
+     1. Open WhatsApp on your phone
+     2. Settings > Linked Devices > Link a Device
+     3. Tap "Link with phone number instead"
+     4. Enter your phone number
+     5. Enter the code: <CODE>
+     ```
+   - If the file doesn't exist yet: wait 5 more seconds (`sleep 5`) and try again
+   - If it contains an `error` field: show the error and suggest trying again
 
-That's it. The running MCP server will detect the file, request the pairing code from WhatsApp, and send it back as a channel message.
+### No arguments — check status
 
-### `/whatsapp:configure` (no arguments)
+1. Check if `~/.claude/channels/whatsapp/auth/creds.json` exists
+2. Read `~/.claude/channels/whatsapp/access.json` if it exists
+3. Report: session configured (yes/no), DM policy, allowed users count
+4. If not connected: tell user to run `/whatsapp:configure connect <phone_number>`
 
-Check current status:
-1. Check if `~/.claude/channels/whatsapp/auth/creds.json` exists — if yes, a session is configured
-2. Read `~/.claude/channels/whatsapp/access.json` if it exists — report the DM policy and number of allowed users
-3. If not connected, tell the user to run `/whatsapp:configure connect <phone_number>`
+### `reset` — clear session
 
-### `/whatsapp:configure reset`
-
-1. Delete `~/.claude/channels/whatsapp/auth/` directory
-2. Recreate it empty: `mkdir -p ~/.claude/channels/whatsapp/auth`
-3. Tell the user they can reconnect with `/whatsapp:configure connect <phone_number>`
+1. `rm -rf ~/.claude/channels/whatsapp/auth && mkdir -p ~/.claude/channels/whatsapp/auth`
+2. Tell user they can reconnect with `/whatsapp:configure connect <phone>`
 
 ## Important
 
-- Never display the contents of auth files — they contain sensitive session keys.
-- A QR code image is also auto-generated at `~/.claude/channels/whatsapp/qr.png` and opened with the system image viewer as a fallback.
+- Never display contents of auth files — they contain sensitive session keys.
+- The pairing code expires in about 60 seconds. Tell the user to enter it immediately.
+- Do NOT request another code if the first one fails — wait at least 30 seconds.
