@@ -1,6 +1,7 @@
 ---
 name: configure
 description: Set up the WhatsApp channel connection. Use 'connect <phone>' to connect via pairing code, or 'reset' to clear the session.
+user-invocable: true
 allowed-tools:
   - Bash
   - Read

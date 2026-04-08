@@ -1,6 +1,7 @@
 ---
 name: access
 description: Manage WhatsApp access control — pair new users, list allowed users, revoke access, or change the DM policy.
+user-invocable: true
 allowed-tools:
   - Bash
   - Read
