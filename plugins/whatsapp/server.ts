@@ -32,13 +32,56 @@ const APPROVED_DIR = path.join(CHANNEL_DIR, 'approved')
 const ACCESS_FILE = path.join(CHANNEL_DIR, 'access.json')
 
 for (const d of [CHANNEL_DIR, AUTH_DIR, INBOX_DIR, APPROVED_DIR]) {
-  fs.mkdirSync(d, { recursive: true })
+  fs.mkdirSync(d, { recursive: true, mode: 0o700 })
 }
 
 // ---------------------------------------------------------------------------
-// Logger (silent for MCP stdio – logs go to file)
+// Constants
+// ---------------------------------------------------------------------------
+const MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024 // 50 MB
+
+// ---------------------------------------------------------------------------
+// Logger (silent for MCP stdio)
 // ---------------------------------------------------------------------------
 const logger = pino({ level: 'silent' }) as any
+
+// ---------------------------------------------------------------------------
+// Global error handlers – prevent silent crashes
+// ---------------------------------------------------------------------------
+process.on('unhandledRejection', (err) => {
+  process.stderr.write(`whatsapp channel: unhandled rejection: ${err}\n`)
+})
+process.on('uncaughtException', (err) => {
+  process.stderr.write(`whatsapp channel: uncaught exception: ${err}\n`)
+})
+
+// ---------------------------------------------------------------------------
+// Security helpers
+// ---------------------------------------------------------------------------
+/** Sanitize a filename from an untrusted source */
+function safeName(s: string | undefined): string | undefined {
+  if (!s) return undefined
+  return path.basename(s).replace(/[<>\[\]\r\n;]/g, '_')
+}
+
+/** Sanitize a file extension from a mimetype */
+function safeExt(mimetype: string, fallback: string): string {
+  const raw = mimetype.split('/')[1] || fallback
+  return raw.replace(/[^a-zA-Z0-9]/g, '') || fallback
+}
+
+/** Block sending files inside CHANNEL_DIR (except inbox) */
+function assertSendable(filePath: string): void {
+  let real: string, stateReal: string
+  try {
+    real = fs.realpathSync(filePath)
+    stateReal = fs.realpathSync(CHANNEL_DIR)
+  } catch { return }
+  const inbox = path.join(stateReal, 'inbox')
+  if (real.startsWith(stateReal + path.sep) && !real.startsWith(inbox + path.sep)) {
+    throw new Error('Refusing to send channel state file')
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Access control state
@@ -65,13 +108,21 @@ function defaultAccess(): AccessState {
 function loadAccess(): AccessState {
   try {
     return { ...defaultAccess(), ...JSON.parse(fs.readFileSync(ACCESS_FILE, 'utf8')) }
-  } catch {
+  } catch (err) {
+    // Move corrupt file aside for debugging
+    if (fs.existsSync(ACCESS_FILE)) {
+      const corrupt = `${ACCESS_FILE}.corrupt-${Date.now()}`
+      fs.renameSync(ACCESS_FILE, corrupt)
+      process.stderr.write(`whatsapp channel: access.json is corrupt, moved to ${corrupt}\n`)
+    }
     return defaultAccess()
   }
 }
 
 function saveAccess(state: AccessState) {
-  fs.writeFileSync(ACCESS_FILE, JSON.stringify(state, null, 2))
+  const tmp = ACCESS_FILE + '.tmp'
+  fs.writeFileSync(tmp, JSON.stringify(state, null, 2) + '\n', { mode: 0o600 })
+  fs.renameSync(tmp, ACCESS_FILE)
 }
 
 // ---------------------------------------------------------------------------
@@ -281,11 +332,12 @@ async function extractMessage(msg: proto.IWebMessageInfo): Promise<{ text: strin
     meta.attachment_kind = 'image'
     meta.attachment_mimetype = m.imageMessage.mimetype || 'image/jpeg'
     try {
-      const buffer = await downloadMediaMessage(msg, 'buffer', {}, { logger, reuploadRequest: sock!.updateMediaMessage })
-      const ext = meta.attachment_mimetype.split('/')[1] || 'jpg'
+      const buffer = await downloadMediaMessage(msg, 'buffer', {}, { logger, reuploadRequest: sock!.updateMediaMessage }) as Buffer
+      if (buffer.length > MAX_ATTACHMENT_BYTES) throw new Error('File too large')
+      const ext = safeExt(meta.attachment_mimetype, 'jpg')
       const filename = `img_${Date.now()}.${ext}`
       const filepath = path.join(INBOX_DIR, filename)
-      fs.writeFileSync(filepath, buffer as Buffer)
+      fs.writeFileSync(filepath, buffer)
       meta.image_path = filepath
     } catch { /* download failed, still deliver text */ }
     return { text: caption ? `[Image] ${caption}` : '[Image received]', meta }
@@ -295,14 +347,16 @@ async function extractMessage(msg: proto.IWebMessageInfo): Promise<{ text: strin
   if (m.documentMessage) {
     meta.attachment_kind = 'document'
     meta.attachment_mimetype = m.documentMessage.mimetype || 'application/octet-stream'
-    meta.attachment_filename = m.documentMessage.fileName || 'file'
+    const cleanName = safeName(m.documentMessage.fileName) || `doc_${Date.now()}`
+    meta.attachment_filename = cleanName
     try {
-      const buffer = await downloadMediaMessage(msg, 'buffer', {}, { logger, reuploadRequest: sock!.updateMediaMessage })
-      const filepath = path.join(INBOX_DIR, meta.attachment_filename)
-      fs.writeFileSync(filepath, buffer as Buffer)
+      const buffer = await downloadMediaMessage(msg, 'buffer', {}, { logger, reuploadRequest: sock!.updateMediaMessage }) as Buffer
+      if (buffer.length > MAX_ATTACHMENT_BYTES) throw new Error('File too large')
+      const filepath = path.join(INBOX_DIR, cleanName)
+      fs.writeFileSync(filepath, buffer)
       meta.attachment_path = filepath
     } catch { /* download failed */ }
-    return { text: `[Document: ${meta.attachment_filename}]`, meta }
+    return { text: `[Document: ${cleanName}]`, meta }
   }
 
   // Audio / Voice
@@ -310,10 +364,11 @@ async function extractMessage(msg: proto.IWebMessageInfo): Promise<{ text: strin
     meta.attachment_kind = m.audioMessage.ptt ? 'voice' : 'audio'
     meta.attachment_mimetype = m.audioMessage.mimetype || 'audio/ogg'
     try {
-      const buffer = await downloadMediaMessage(msg, 'buffer', {}, { logger, reuploadRequest: sock!.updateMediaMessage })
+      const buffer = await downloadMediaMessage(msg, 'buffer', {}, { logger, reuploadRequest: sock!.updateMediaMessage }) as Buffer
+      if (buffer.length > MAX_ATTACHMENT_BYTES) throw new Error('File too large')
       const filename = `audio_${Date.now()}.ogg`
       const filepath = path.join(INBOX_DIR, filename)
-      fs.writeFileSync(filepath, buffer as Buffer)
+      fs.writeFileSync(filepath, buffer)
       meta.attachment_path = filepath
     } catch { /* download failed */ }
     return { text: `[${meta.attachment_kind === 'voice' ? 'Voice message' : 'Audio'} received]`, meta }
@@ -325,11 +380,12 @@ async function extractMessage(msg: proto.IWebMessageInfo): Promise<{ text: strin
     meta.attachment_mimetype = m.videoMessage.mimetype || 'video/mp4'
     const caption = m.videoMessage.caption || ''
     try {
-      const buffer = await downloadMediaMessage(msg, 'buffer', {}, { logger, reuploadRequest: sock!.updateMediaMessage })
-      const ext = meta.attachment_mimetype.split('/')[1] || 'mp4'
+      const buffer = await downloadMediaMessage(msg, 'buffer', {}, { logger, reuploadRequest: sock!.updateMediaMessage }) as Buffer
+      if (buffer.length > MAX_ATTACHMENT_BYTES) throw new Error('File too large')
+      const ext = safeExt(meta.attachment_mimetype, 'mp4')
       const filename = `video_${Date.now()}.${ext}`
       const filepath = path.join(INBOX_DIR, filename)
-      fs.writeFileSync(filepath, buffer as Buffer)
+      fs.writeFileSync(filepath, buffer)
       meta.attachment_path = filepath
     } catch { /* download failed */ }
     return { text: caption ? `[Video] ${caption}` : '[Video received]', meta }
@@ -363,6 +419,8 @@ async function extractMessage(msg: proto.IWebMessageInfo): Promise<{ text: strin
 // ---------------------------------------------------------------------------
 async function handlePairing(senderId: string, chatId: string) {
   if (!sock) return
+  // Never send pairing codes to groups — only DMs
+  if (chatId.endsWith('@g.us')) return
 
   const access = loadAccess()
 
@@ -424,7 +482,8 @@ setInterval(async () => {
       try {
         const data = JSON.parse(fs.readFileSync(filepath, 'utf8'))
         const { senderId, chatId } = data
-        if (senderId && chatId) {
+        // Validate chatId format before sending
+        if (senderId && chatId && chatId.includes('@') && loadAccess().allowFrom.includes(senderId)) {
           await sock.sendMessage(chatId, {
             text: 'Paired successfully! You can now chat with Claude through this conversation.',
           })
@@ -522,13 +581,10 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
 // Validate that a chat_id is allowed for outbound messages
 function assertAllowedChat(chatId: string) {
   const access = loadAccess()
-  const isGroup = chatId.endsWith('@g.us')
 
-  if (isGroup) {
+  if (chatId.endsWith('@g.us')) {
     if (access.groups[chatId]) return
   } else {
-    // Extract sender from JID
-    if (access.allowFrom.some((id) => chatId.includes(id.split('@')[0]))) return
     if (access.allowFrom.includes(chatId)) return
   }
 
@@ -549,6 +605,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       if (file_path) {
         const absPath = path.resolve(file_path)
         if (!fs.existsSync(absPath)) throw new Error(`File not found: ${absPath}`)
+        assertSendable(absPath)
 
         const ext = path.extname(absPath).toLowerCase()
         const imageExts = ['.jpg', '.jpeg', '.png', '.gif', '.webp']
@@ -621,14 +678,20 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
 
     case 'download_attachment': {
       const { attachment_path } = args
+      const resolved = path.resolve(attachment_path)
 
-      if (!fs.existsSync(attachment_path)) {
-        return { content: [{ type: 'text', text: `File not found at: ${attachment_path}` }] }
+      // Only allow access to files inside the inbox directory
+      if (!resolved.startsWith(INBOX_DIR + path.sep) && resolved !== INBOX_DIR) {
+        throw new Error('attachment_path must be inside the inbox directory')
+      }
+
+      if (!fs.existsSync(resolved)) {
+        return { content: [{ type: 'text', text: `File not found at: ${resolved}` }] }
       }
 
       return {
         content: [
-          { type: 'text', text: `File available at: ${attachment_path}` },
+          { type: 'text', text: `File available at: ${resolved}` },
         ],
       }
     }

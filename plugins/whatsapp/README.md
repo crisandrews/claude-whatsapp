@@ -1,100 +1,131 @@
-# WhatsApp Channel Plugin for Claude Code
+# WhatsApp
 
-A WhatsApp messaging bridge for Claude Code, using [Baileys](https://github.com/WhiskeySockets/Baileys) for direct WhatsApp Web connectivity. Scan a QR code and chat with Claude through WhatsApp.
+Connect your WhatsApp account to Claude Code with an MCP server.
 
-## Setup
+The MCP server connects to WhatsApp Web via [Baileys](https://github.com/WhiskeySockets/Baileys) and provides tools to Claude to reply, react, and handle media. When someone messages your WhatsApp number, the server forwards the message to your Claude Code session.
 
-### Prerequisites
+## Prerequisites
 
-- [Bun](https://bun.sh) runtime installed
-- A WhatsApp account on your phone
+- [Node.js](https://nodejs.org/) v18+ — the MCP server runs on Node. Install from nodejs.org or via `brew install node`.
 
-### Installation
+## Quick Setup
 
-```bash
-# Install the plugin
-claude plugin install whatsapp
+> Default pairing flow for a single-user DM bot. See `/whatsapp:access` for groups and multi-user setups.
 
-# Or from this repository
-claude plugin install whatsapp@<your-github-org>
+**1. Install the plugin.**
+
+These are Claude Code commands — run `claude` to start a session first.
+
+Add the marketplace and install:
+
+```
+/plugin marketplace add crisandrews/claude-whatsapp
+/plugin install whatsapp@claude-whatsapp
 ```
 
-### Connect
+**2. Launch with the channel flag.**
 
-```bash
-# Start Claude Code with the WhatsApp channel
-claude --channels plugin:whatsapp
+Exit your session and start a new one with the channel enabled:
+
+```sh
+claude --dangerously-load-development-channels plugin:whatsapp@claude-whatsapp
 ```
 
-A QR code will appear in the terminal. Scan it with your phone:
-1. Open WhatsApp
+> The first launch installs dependencies (~30 seconds). Subsequent launches are instant.
+
+**3. Scan the QR code.**
+
+In your Claude Code session, run:
+
+```
+/whatsapp:configure
+```
+
+The skill waits for the server to be ready, then opens a QR code image on your screen. Scan it with your phone:
+
+1. Open **WhatsApp**
 2. Go to **Settings > Linked Devices > Link a Device**
-3. Scan the QR code
+3. Point your camera at the QR code
 
-### Pairing
+Once scanned, the session is saved — you won't need to scan again unless you log out or the session expires.
 
-Once connected, anyone who messages your WhatsApp number will receive a 6-character pairing code. To approve them:
+> The QR refreshes every ~20 seconds. If it expires, run `/whatsapp:configure` again.
+
+**4. Pair.**
+
+With Claude Code running from the previous step, send a message to your WhatsApp number from another phone — the bot replies with a 6-character pairing code. In your Claude Code session:
 
 ```
 /whatsapp:access pair <code>
 ```
 
-## Skills
+Your next message reaches the assistant.
 
-| Skill | Description |
-|-------|-------------|
-| `/whatsapp:configure` | Check connection status or reset the session |
-| `/whatsapp:access` | Manage access control (pair, list, revoke, policy) |
+**5. Lock it down.**
 
-## Access Control
-
-The plugin supports three DM policies:
-
-- **pairing** (default): Unknown senders receive a pairing code. Approve in Claude Code to allow them.
-- **allowlist**: Only pre-approved users can message. Others are silently dropped.
-- **disabled**: All inbound messages are dropped.
+Pairing is for capturing IDs. Once you're in, switch to `allowlist` so strangers don't get pairing-code replies:
 
 ```
-/whatsapp:access policy pairing    # default
-/whatsapp:access policy allowlist  # strict
-/whatsapp:access policy disabled   # off
+/whatsapp:access policy allowlist
 ```
 
-## Architecture
+## Access control
 
-This plugin follows the same architecture as the official [Telegram plugin](https://github.com/anthropics/claude-plugins-official/tree/main/external_plugins/telegram):
+Managed via the `/whatsapp:access` skill. Quick reference:
 
-- **MCP Server** on stdio with `claude/channel` experimental capability
-- **Baileys** for WhatsApp Web WebSocket connection (no browser needed)
-- **Inbound**: Messages arrive via Baileys events, forwarded to Claude via `notifications/claude/channel`
-- **Outbound**: Claude uses `reply`, `react`, and `download_attachment` MCP tools
-- **Access control**: File-based (JSON) with pairing flow
-- **Session persistence**: Multi-file auth state in `~/.claude/channels/whatsapp/auth/`
+| Command | Description |
+| --- | --- |
+| `/whatsapp:access` | List allowed users, pending pairings, and current policy |
+| `/whatsapp:access pair <code>` | Approve a pending pairing request |
+| `/whatsapp:access deny <code>` | Reject a pending pairing request |
+| `/whatsapp:access allow <jid>` | Add a user directly to the allowlist |
+| `/whatsapp:access revoke <jid>` | Remove a user from the allowlist |
+| `/whatsapp:access policy <mode>` | Set DM policy: `pairing`, `allowlist`, or `disabled` |
+| `/whatsapp:access add-group <jid>` | Allow a WhatsApp group |
+| `/whatsapp:access remove-group <jid>` | Remove a WhatsApp group |
 
-## Tools
+IDs are WhatsApp JIDs: `<countrycode><number>@s.whatsapp.net` (e.g. `56912345678@s.whatsapp.net`). Default policy is `pairing`.
 
-| Tool | Description |
-|------|-------------|
-| `reply` | Send text or files to a WhatsApp chat (auto-chunks at 4096 chars) |
-| `react` | Add emoji reaction to a message |
-| `download_attachment` | Download media from a received message |
+## Tools exposed to the assistant
 
-## File Structure
+| Tool | Purpose |
+| --- | --- |
+| `reply` | Send to a chat. Takes `chat_id` + `text`, optionally `reply_to` for quoting and `file_path` for attachments. Images (`.jpg`/`.png`/`.gif`/`.webp`) send as photos; other types send as documents. Auto-chunks text over 4096 characters. Max 50 MB per file. |
+| `react` | Add an emoji reaction to a message by ID. Any emoji works. |
+| `download_attachment` | Access a media file that was downloaded from a received message. Only files inside the inbox are accessible. |
 
-```
-~/.claude/channels/whatsapp/
-├── auth/               # Baileys session keys (auto-generated)
-├── inbox/              # Downloaded media files
-├── approved/           # Pairing approval signals
-└── access.json         # Access control state
-```
+## Media
 
-## Important Notes
+Inbound photos, voice messages, videos, documents, and audio are automatically
+downloaded to `~/.claude/channels/whatsapp/inbox/` and the local path is included
+in the channel notification so the assistant can read the file. Max file size: 50 MB.
 
-- **Unofficial API**: Baileys is not officially supported by WhatsApp. Use responsibly.
-- **Session expiry**: WhatsApp Web sessions can expire. If disconnected, a new QR scan may be needed.
-- **One session**: Only one WhatsApp Web session can be active per phone number at a time (this replaces any existing linked device in that slot).
+## WhatsApp formatting
 
-## License
+WhatsApp uses its own formatting — not Markdown:
 
-Apache 2.0
+- `*bold*`, `_italic_`, `~strikethrough~`, `` ```code blocks``` ``
+- No clickable link syntax — URLs are pasted directly
+
+## Session persistence
+
+Your WhatsApp Web session is saved in `~/.claude/channels/whatsapp/auth/`. As long
+as this directory is intact, you stay connected without rescanning. If WhatsApp logs
+you out (e.g. from your phone), the session clears automatically — run
+`/whatsapp:configure` to scan a new QR.
+
+To manually reset: `/whatsapp:configure reset`
+
+## No history or search
+
+WhatsApp Web only sees messages as they arrive — the assistant cannot fetch older
+messages. If it needs earlier context, it will ask you to paste or summarize.
+
+Photos and documents are downloaded eagerly on arrival since there's no way to
+fetch them later.
+
+## Important notes
+
+- **Unofficial API** — Baileys is not officially endorsed by WhatsApp. Use responsibly — no spam, no bulk messaging.
+- **One session per slot** — Linking this replaces one of your Linked Devices slots (up to 4). You can unlink it from your phone at any time via Settings > Linked Devices.
+- **Security** — Access state (`access.json`) is written with restricted permissions (0600). Auth credentials and channel state files cannot be sent as attachments. Filenames from inbound media are sanitized to prevent path traversal.
