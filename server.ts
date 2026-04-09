@@ -87,6 +87,85 @@ function assertSendable(filePath: string): void {
 }
 
 // ---------------------------------------------------------------------------
+// Audio transcription (optional — enabled via /whatsapp:configure audio)
+// ---------------------------------------------------------------------------
+const CONFIG_FILE = path.join(CHANNEL_DIR, 'config.json')
+
+interface PluginConfig {
+  audioTranscription?: boolean
+}
+
+function loadConfig(): PluginConfig {
+  try {
+    return JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'))
+  } catch {
+    return {}
+  }
+}
+
+let transcriber: { transcribe: (buffer: Buffer) => Promise<string> } | null = null
+
+async function initTranscriber() {
+  const config = loadConfig()
+  if (!config.audioTranscription) return
+
+  try {
+    const { pipeline } = await import('@huggingface/transformers')
+    const { OggOpusDecoder } = await import('ogg-opus-decoder')
+
+    // Load whisper pipeline (downloads model on first use, ~77MB)
+    const whisperPipeline = await pipeline(
+      'automatic-speech-recognition',
+      'onnx-community/whisper-base',
+      { dtype: 'q8' },
+    )
+
+    const decoder = new OggOpusDecoder()
+    await decoder.ready
+
+    transcriber = {
+      async transcribe(buffer: Buffer): Promise<string> {
+        // Decode ogg/opus to PCM
+        const { channelData, samplesDecoded, sampleRate } = await decoder.decode(
+          new Uint8Array(buffer),
+        )
+
+        if (!channelData || !channelData[0] || samplesDecoded === 0) {
+          throw new Error('Failed to decode audio')
+        }
+
+        // Resample to 16kHz if needed
+        let samples = channelData[0]
+        if (sampleRate !== 16000) {
+          const ratio = 16000 / sampleRate
+          const newLength = Math.round(samples.length * ratio)
+          const resampled = new Float32Array(newLength)
+          for (let i = 0; i < newLength; i++) {
+            const srcIdx = i / ratio
+            const idx = Math.floor(srcIdx)
+            const frac = srcIdx - idx
+            resampled[i] =
+              idx + 1 < samples.length
+                ? samples[idx] * (1 - frac) + samples[idx + 1] * frac
+                : samples[idx]
+          }
+          samples = resampled
+        }
+
+        const result = await whisperPipeline(samples)
+        const text = Array.isArray(result) ? result[0]?.text : (result as any)?.text
+        return text?.trim() || '[Transcription empty]'
+      },
+    }
+
+    process.stderr.write('whatsapp channel: audio transcription enabled (whisper-base)\n')
+  } catch (err) {
+    process.stderr.write(`whatsapp channel: audio transcription not available: ${err}\n`)
+    transcriber = null
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Access control state
 // ---------------------------------------------------------------------------
 interface PendingEntry {
@@ -413,14 +492,25 @@ async function extractMessage(msg: proto.IWebMessageInfo): Promise<{ text: strin
   if (m.audioMessage) {
     meta.attachment_kind = m.audioMessage.ptt ? 'voice' : 'audio'
     meta.attachment_mimetype = m.audioMessage.mimetype || 'audio/ogg'
+    let audioBuffer: Buffer | null = null
     try {
-      const buffer = await downloadMediaMessage(msg, 'buffer', {}, { logger, reuploadRequest: sock!.updateMediaMessage }) as Buffer
-      if (buffer.length > MAX_ATTACHMENT_BYTES) throw new Error('File too large')
+      audioBuffer = await downloadMediaMessage(msg, 'buffer', {}, { logger, reuploadRequest: sock!.updateMediaMessage }) as Buffer
+      if (audioBuffer.length > MAX_ATTACHMENT_BYTES) throw new Error('File too large')
       const filename = `audio_${Date.now()}.ogg`
       const filepath = path.join(INBOX_DIR, filename)
-      fs.writeFileSync(filepath, buffer)
+      fs.writeFileSync(filepath, audioBuffer)
       meta.attachment_path = filepath
     } catch { /* download failed */ }
+
+    // Transcribe if enabled
+    if (transcriber && audioBuffer) {
+      try {
+        const text = await transcriber.transcribe(audioBuffer)
+        meta.transcribed = 'true'
+        return { text, meta }
+      } catch { /* transcription failed, fall back to default */ }
+    }
+
     return { text: `[${meta.attachment_kind === 'voice' ? 'Voice message' : 'Audio'} received]`, meta }
   }
 
@@ -770,6 +860,9 @@ process.on('SIGINT', shutdown)
 async function main() {
   // Start MCP server FIRST (uses stdout for protocol)
   await mcp.connect(new StdioServerTransport())
+
+  // Initialize audio transcription if enabled (non-blocking)
+  initTranscriber().catch(() => {})
 
   // Then start WhatsApp connection (notifications require MCP to be ready)
   await connectWhatsApp()

@@ -100,6 +100,18 @@ Emoji reactions on messages are forwarded to Claude as commands:
 
 Long-press any message in the chat and tap a reaction. Claude will interpret it in context.
 
+## Voice transcription (optional)
+
+By default, voice messages arrive as `[Voice message received]` with the audio file saved. To enable automatic local transcription:
+
+```
+/whatsapp:configure audio
+```
+
+This installs a local Whisper model (~77MB, runs entirely on your machine — no API keys needed). After restarting Claude, voice messages are automatically transcribed to text.
+
+Disable with `/whatsapp:configure audio off`.
+
 ## Media
 
 Inbound photos, voice messages, videos, and documents are downloaded to `.whatsapp/inbox/` inside your project directory. Max 50 MB.
