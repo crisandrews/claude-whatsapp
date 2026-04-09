@@ -262,6 +262,7 @@ Then reopen Claude and install again.
 - **QR code expired** — Run `/whatsapp:configure` again. The server generates a fresh QR every ~20 seconds.
 - **WhatsApp disconnected** — Sessions can expire if you log out from your phone. Run `/whatsapp:configure reset` then `/whatsapp:configure` to scan a new QR.
 - **Voice transcription is slow** — Whisper runs on CPU. Try `/whatsapp:configure audio model tiny` for speed, or `/whatsapp:configure audio quality fast`.
+- **Audio transcription stops working after update** — Updates reinstall core dependencies, which can remove the optional audio packages. Run `/whatsapp:configure audio es` (or your language) again to re-enable.
 - **Reinstall fails or plugin behaves unexpectedly** — Clear the cache: close Claude, run `rm -rf ~/.claude/plugins/cache/claude-whatsapp` in terminal, reopen and install again.
 
 ## Important
