@@ -239,6 +239,23 @@ async function connectWhatsApp() {
       try {
         await QRCode.toFile(QR_IMAGE_PATH, qr, { width: 512, margin: 2 })
         writeStatus('qr_ready', { qrPath: QR_IMAGE_PATH })
+
+        // Notify the user to run /whatsapp:configure
+        try {
+          mcp.notification({
+            method: 'notifications/claude/channel',
+            params: {
+              content: 'WhatsApp is ready to connect. Tell the user to run /whatsapp:configure to scan the QR code.',
+              meta: {
+                chat_id: 'system',
+                message_id: 'setup-' + Date.now(),
+                user: 'system',
+                user_id: 'system',
+                ts: new Date().toISOString(),
+              },
+            },
+          })
+        } catch { /* first QR may fire before MCP is ready */ }
       } catch {
         writeStatus('qr_error')
       }
