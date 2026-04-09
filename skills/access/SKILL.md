@@ -73,10 +73,11 @@ End with a concrete next step based on state:
 1. Read `access.json`
 2. Look up `<code>` in `pending`
 3. **If found and not expired:**
-   - Add `pending[code].senderId` to `allowFrom` (skip if already present)
-   - Remove from `pending`
+   - Add BOTH `pending[code].senderId` AND `pending[code].chatId` to `allowFrom` (skip duplicates). Baileys v7 can identify the same user with two different JID formats (`@lid` and `@s.whatsapp.net`), so both must be in the allowlist.
+   - Remove this entry from `pending`
+   - Also remove any OTHER pending entries that share the same `senderId` or `chatId` — they are the same user with a different JID format.
    - Save `access.json`
-   - Write `.whatsapp/approved/<senderId>.json` with `{"senderId":"...","chatId":"..."}` — signals the server to send confirmation
+   - Write `$STATE_DIR/approved/<senderId>.json` with `{"senderId":"...","chatId":"..."}` — signals the server to send confirmation
    - Tell the user who was approved
 4. **If not found or expired:** tell the user
 
