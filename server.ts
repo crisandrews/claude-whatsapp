@@ -25,7 +25,23 @@ import QRCode from 'qrcode'
 // ---------------------------------------------------------------------------
 // Paths — project-scoped if CLAUDE_PROJECT_DIR is set, global otherwise
 // ---------------------------------------------------------------------------
-const PROJECT_DIR = process.env.CLAUDE_PROJECT_DIR
+// Detect project directory from installed_plugins.json (for local-scoped installs)
+function detectProjectDir(): string | undefined {
+  try {
+    const pluginsFile = path.join(os.homedir(), '.claude', 'plugins', 'installed_plugins.json')
+    const data = JSON.parse(fs.readFileSync(pluginsFile, 'utf8'))
+    const entries = data.plugins?.['whatsapp@claude-whatsapp']
+    if (!entries) return undefined
+    for (const entry of entries) {
+      if (entry.scope === 'local' && entry.projectPath) {
+        return entry.projectPath
+      }
+    }
+  } catch {}
+  return undefined
+}
+
+const PROJECT_DIR = process.env.CLAUDE_PROJECT_DIR || detectProjectDir()
 const CHANNEL_DIR = PROJECT_DIR
   ? path.join(PROJECT_DIR, '.whatsapp')
   : path.join(os.homedir(), '.claude', 'channels', 'whatsapp')
