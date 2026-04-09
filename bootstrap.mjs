@@ -84,8 +84,8 @@ if (existsSync(marker)) {
         },
         jsonrpc: '2.0',
       })
-      // Exit so /reload-plugins launches a fresh bootstrap that finds deps and runs server.ts
-      setTimeout(() => process.exit(0), 1000)
+      // Stay alive — when user runs /reload-plugins, Claude Code kills this process
+      // and launches a fresh bootstrap that finds deps and runs server.ts directly.
     } else {
       process.stderr.write('whatsapp: npm install failed\n')
     }

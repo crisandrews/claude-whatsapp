@@ -233,11 +233,7 @@ Reset with `/whatsapp:configure reset`.
 /plugin update whatsapp@claude-whatsapp
 ```
 
-```
-/reload-plugins
-```
-
-Wait for Claude to respond — it will tell you what to do next. If it mentions dependencies installing, wait and run `/reload-plugins` again. Once Claude confirms the connection is active, you're done. This does NOT reset your session or access control.
+Then close Claude and reopen with the same launch command. Your WhatsApp session is preserved — no need to scan the QR code again.
 
 **Uninstall:**
 
