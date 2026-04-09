@@ -45,9 +45,7 @@ Exit Claude Code (`/exit` or Ctrl+C), then relaunch:
 claude --dangerously-load-development-channels plugin:whatsapp@claude-whatsapp --dangerously-skip-permissions
 ```
 
-> `--dangerously-skip-permissions` lets the agent run without asking for confirmation on every action — recommended for a smooth experience.
-
-> **First launch:** Dependencies install in the background (~60s). Run `/whatsapp:configure` — if the server isn't ready yet, close and reopen Claude with the same command. It will work instantly the second time.
+> `--dangerously-skip-permissions` lets the agent run without asking for confirmation on every action — recommended for a smooth experience. First launch installs dependencies in the background (~60-90s). Subsequent launches are instant.
 
 **4. Scan the QR code.**
 
