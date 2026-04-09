@@ -17,7 +17,6 @@
 - Missing watchers on first launch: `watchApproved()` and `watchConfig()` were not called in the dep-polling branch, so config changes were never detected.
 - Duplicate pairing for same user: Baileys v7 can identify one user with two JID formats (`@lid` and `@s.whatsapp.net`). Gate now checks both, pairing deduplicates across formats, and access skill adds both IDs on approval.
 - Silent error swallowing: all media download and transcription catch blocks now log errors to system.log.
-- Browser identifier: changed from `Browsers.ubuntu()` to generic Chrome to avoid platform-specific issues.
 
 ## v1.1.0
 
