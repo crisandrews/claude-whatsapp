@@ -918,9 +918,6 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       const { chat_id, text, reply_to, file_path } = args
       assertAllowedChat(chat_id)
 
-      // Show typing indicator
-      try { await sock.sendPresenceUpdate('composing', chat_id) } catch {}
-
       // Handle file attachment
       if (file_path) {
         const absPath = path.resolve(file_path)
