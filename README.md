@@ -98,3 +98,7 @@ Saved in `~/.claude/channels/whatsapp/auth/`. Reset with `/whatsapp:configure re
 - **Unofficial API** — Baileys is not endorsed by WhatsApp. Use responsibly.
 - **One linked device slot** — Unlink anytime from WhatsApp > Settings > Linked Devices.
 - **No message history** — Only sees messages as they arrive.
+
+## Disclaimer
+
+This project is not affiliated with, endorsed by, or associated with WhatsApp, Meta, or Anthropic. WhatsApp is a trademark of Meta Platforms, Inc. Claude is a trademark of Anthropic, PBC. This plugin uses the unofficial Baileys library for WhatsApp Web connectivity.
