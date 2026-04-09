@@ -1,6 +1,6 @@
 ---
 name: configure
-description: Connect WhatsApp by scanning a QR code. Run this after starting Claude with the whatsapp channel to set up your connection.
+description: Set up and manage the WhatsApp channel connection. Use when the user wants to connect WhatsApp (scan QR code), check connection status, reset the session, enable or disable voice transcription, or set the transcription language. Triggers on /whatsapp:configure, "set up whatsapp", "scan QR", "enable audio", "reset whatsapp", or "whatsapp status".
 user-invocable: true
 allowed-tools:
   - Bash(ls *)
