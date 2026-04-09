@@ -238,8 +238,10 @@ Reset with `/whatsapp:configure reset`.
    ```sh
    claude --dangerously-load-development-channels plugin:whatsapp@claude-whatsapp --dangerously-skip-permissions
    ```
+4. Wait for the "dependencies installed" notification (~60s on first update)
+5. Run `/reload-plugins`, then `/whatsapp:configure`
 
-Your WhatsApp session is preserved — no QR scan needed. A restart is required because the MCP server loads once at startup.
+Your WhatsApp session is preserved — no QR scan needed. The dependency install only happens once per update.
 
 **Uninstall:**
 
