@@ -31,19 +31,15 @@ This is the main setup flow:
    - `ls ~/.claude/channels/whatsapp/status.json 2>/dev/null` (global fallback)
    Call whichever path exists `STATE_DIR`.
 
-2. **If neither exists**, the server hasn't started yet. On the first launch, it needs to install dependencies which happens automatically in the background. Tell the user:
+2. **If neither exists**, the server is still starting (first launch installs dependencies in the background, ~60-90s). Tell the user:
+   "Server is installing dependencies in the background... this only happens the first time. Please wait."
+   Then poll in a loop:
+   - `sleep 15` then check both paths again
+   - Repeat up to 8 times (2 minutes total)
+   - Between each check, tell the user "Still installing... please wait."
+   - If after 8 attempts neither exists, tell the user: "Dependencies are still installing. Please close Claude and reopen with the same command — it will work instantly the next time."
 
-   "The server is installing dependencies in the background (first time only). Please close Claude and reopen with the same command:"
-
-   ```
-   claude --dangerously-load-development-channels plugin:whatsapp@claude-whatsapp --dangerously-skip-permissions
-   ```
-
-   "Then run `/whatsapp:configure` again. It will work instantly the second time."
-
-   **Do NOT poll or wait.** The first launch installs deps in the background and requires a restart to take effect.
-
-4. **Once status.json exists**, read it with: `cat $STATE_DIR/status.json`
+3. **Once status.json exists**, read it with: `cat $STATE_DIR/status.json`
 
 5. **Based on status:**
    - `deps_missing`: Dependencies need to be installed. Find the plugin path: `ls -d ~/.claude/plugins/cache/claude-whatsapp/whatsapp/*/package.json 2>/dev/null` — get the directory. Tell the user "Installing dependencies... this can take 1-2 minutes." Then run `npm install --prefix $PLUGIN_DIR`. Once done, tell the user "Dependencies installed! Waiting for WhatsApp to connect..." Then poll for status change (sleep 5, check status.json, repeat up to 6 times). The server will detect the deps and start automatically.
