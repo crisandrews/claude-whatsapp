@@ -204,41 +204,52 @@ async function initTranscriber() {
 
     transcriber = {
       async transcribe(buffer: Buffer): Promise<string> {
-        // Decode ogg/opus to PCM
-        const { channelData, samplesDecoded, sampleRate } = await decoder.decode(
-          new Uint8Array(buffer),
-        )
+        // Decode entire ogg/opus file to PCM
+        const decoded = await decoder.decode(new Uint8Array(buffer))
 
-        if (!channelData || !channelData[0] || samplesDecoded === 0) {
+        // Collect all channel data (decode may return partial frames)
+        let allSamples: Float32Array
+        const ch = decoded.channelData
+        if (!ch || !ch[0] || decoded.samplesDecoded === 0) {
           throw new Error('Failed to decode audio')
         }
+        allSamples = ch[0]
+
+        // Free decoder resources for next call
+        await decoder.reset()
 
         // Resample to 16kHz if needed
-        let samples = channelData[0]
+        const sampleRate = decoded.sampleRate
         if (sampleRate !== 16000) {
           const ratio = 16000 / sampleRate
-          const newLength = Math.round(samples.length * ratio)
+          const newLength = Math.round(allSamples.length * ratio)
           const resampled = new Float32Array(newLength)
           for (let i = 0; i < newLength; i++) {
             const srcIdx = i / ratio
             const idx = Math.floor(srcIdx)
             const frac = srcIdx - idx
             resampled[i] =
-              idx + 1 < samples.length
-                ? samples[idx] * (1 - frac) + samples[idx + 1] * frac
-                : samples[idx]
+              idx + 1 < allSamples.length
+                ? allSamples[idx] * (1 - frac) + allSamples[idx + 1] * frac
+                : allSamples[idx]
           }
-          samples = resampled
+          allSamples = resampled
         }
 
         const config = loadConfig()
         const lang = config.audioLanguage || null // null = auto-detect
-        const result = await whisperPipeline(samples, {
+        const result = await whisperPipeline(allSamples, {
           language: lang,
           task: 'transcribe',
+          chunk_length_s: 30,
+          stride_length_s: 5,
         })
-        const text = Array.isArray(result) ? result[0]?.text : (result as any)?.text
-        return text?.trim() || '[Transcription empty]'
+
+        // Concatenate all chunks (Whisper may split long audio)
+        const text = Array.isArray(result)
+          ? result.map((r: any) => r.text || '').join(' ')
+          : (result as any)?.text || ''
+        return text.trim() || '[Transcription empty]'
       },
     }
 
