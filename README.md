@@ -23,10 +23,15 @@ claude
 
 **2. Install the plugin.**
 
-Inside Claude Code, add the marketplace and install:
+Inside Claude Code, add the marketplace:
 
 ```
 /plugin marketplace add crisandrews/claude-whatsapp
+```
+
+Then install the plugin:
+
+```
 /plugin install whatsapp@claude-whatsapp
 ```
 
