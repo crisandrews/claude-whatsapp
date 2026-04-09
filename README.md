@@ -154,6 +154,10 @@ claude --dangerously-load-development-channels plugin:whatsapp@claude-whatsapp -
 
 Once the agent is running, type `/mcp` inside Claude Code and enable **computer use**. This lets the agent control your computer (click, type, take screenshots) — useful for tasks that go beyond chat.
 
+### Using a WhatsApp number that's already on OpenClaw
+
+If you have a WhatsApp number running an agent on [OpenClaw](https://github.com/openclaw/openclaw), you can try this plugin without losing anything. Just close OpenClaw (or stop that agent), scan the QR code here, and the number will work through Claude Code natively. When you're done, close Claude Code and reopen OpenClaw — your OpenClaw agent will reconnect and respond as before. Each platform re-links the WhatsApp session on startup, so they don't conflict — just don't run both at the same time on the same number.
+
 ### Multiple agents
 
 Each agent folder has its own WhatsApp session and access control:
