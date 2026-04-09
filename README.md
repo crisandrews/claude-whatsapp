@@ -231,7 +231,10 @@ Reset with `/whatsapp:configure reset`.
 
 ```
 /plugin update whatsapp@claude-whatsapp
+/reload-plugins
 ```
+
+After reloading, run `/whatsapp:configure` to verify the connection is still active. This does NOT reset your session or access control — it only checks the status and reconnects if needed.
 
 **Uninstall:**
 
