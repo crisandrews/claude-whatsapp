@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.2.1
+
+### Fixes
+
+- Auto-wait on `reconnecting` status instead of asking user to re-run `/whatsapp:configure`.
+- Clarified update flow: wait for Claude to respond after `/reload-plugins`, may need a second reload.
+- Documented that audio transcription may need re-enabling after plugin update.
+
 ## v1.2.0
 
 ### Changes
