@@ -1,8 +1,10 @@
-# WhatsApp
+# WhatsApp for Claude Code
 
-Connect your WhatsApp account to Claude Code with an MCP server.
+> **Release 1.0** — First stable release.
 
-The server connects to WhatsApp Web via [Baileys](https://github.com/WhiskeySockets/Baileys) and provides tools to Claude to reply, react, and handle media. When someone messages your WhatsApp number, the server forwards the message to your Claude Code session.
+With Anthropic's recent policy changes, many users lost access to their AI agents through messaging platforms. While official channel plugins exist for [Telegram](https://github.com/anthropics/claude-plugins-official/tree/main/external_plugins/telegram) and Instagram, **WhatsApp — the world's most used messaging app — had no solution.**
+
+This plugin fills that gap. It connects your WhatsApp number directly to Claude Code, turning it into a fully functional AI agent that responds through WhatsApp. This is version 1.0 with plans to evolve into a more complete and agentic platform for WhatsApp.
 
 ## Prerequisites
 
