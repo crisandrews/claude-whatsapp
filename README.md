@@ -66,6 +66,19 @@ Message your WhatsApp number from another phone. It replies with a 6-character c
 
 Now only your approved contacts can reach Claude.
 
+## Tips for a more autonomous agent
+
+**Skip permission prompts + enable web browsing:**
+
+```sh
+claude --dangerously-load-development-channels plugin:whatsapp@claude-whatsapp --dangerously-skip-permissions --chrome
+```
+
+- `--dangerously-skip-permissions` lets the agent execute tools without asking for confirmation each time.
+- `--chrome` gives the agent access to browse the web and interact with pages.
+
+**Enable computer use:** Once the agent is running, type `/mcp` inside Claude Code and enable computer use. This lets the agent control your computer (click, type, take screenshots) — useful for tasks that go beyond chat.
+
 ## Access control
 
 | Command | Description |
