@@ -68,12 +68,12 @@ if (existsSync(marker)) {
   npm.on('close', (code) => {
     installing = false
     if (code === 0) {
-      process.stderr.write('whatsapp: dependencies installed! Run /reload-plugins to activate.\n')
+      process.stderr.write('whatsapp: dependencies installed!\n')
       // Send channel notification so Claude tells the user
       send({
         method: 'notifications/claude/channel',
         params: {
-          content: 'WhatsApp dependencies installed successfully! Tell the user to run /reload-plugins to activate the WhatsApp connection.',
+          content: 'WhatsApp dependencies installed! Tell the user to run /reload-plugins now to activate the connection, then /whatsapp:configure to scan the QR code.',
           meta: {
             chat_id: 'system',
             message_id: 'deps-ready-' + Date.now(),
@@ -84,6 +84,8 @@ if (existsSync(marker)) {
         },
         jsonrpc: '2.0',
       })
+      // Exit so /reload-plugins launches a fresh bootstrap that finds deps and runs server.ts
+      setTimeout(() => process.exit(0), 1000)
     } else {
       process.stderr.write('whatsapp: npm install failed\n')
     }
