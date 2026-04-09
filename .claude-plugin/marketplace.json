@@ -10,7 +10,7 @@
       "name": "whatsapp",
       "description": "WhatsApp messaging bridge — scan QR, chat with Claude via WhatsApp, built-in access control.",
       "category": "productivity",
-      "source": "./plugins/whatsapp"
+      "source": "./"
     }
   ]
 }
