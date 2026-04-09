@@ -53,7 +53,7 @@ This is the main setup flow:
      ```
    - `qr_error`: Tell user to run `/whatsapp:configure reset` and try again.
    - `logged_out`: Tell user to run `/whatsapp:configure reset`.
-   - `reconnecting`: Tell the user "Server is reconnecting... run `/whatsapp:configure` again in a few seconds to check."
+   - `reconnecting`: Tell the user "Server is reconnecting to WhatsApp... this is normal after an update. Run `/reload-plugins` once more, then `/whatsapp:configure`. Do NOT run reset — your session is safe."
 
 ### `reset` — clear session
 
