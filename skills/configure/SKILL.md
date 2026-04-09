@@ -31,13 +31,13 @@ This is the main setup flow:
    - `ls ~/.claude/channels/whatsapp/status.json 2>/dev/null` (global fallback)
    Call whichever path exists `STATE_DIR`.
 
-2. **If neither exists**, the server is still starting (first launch installs dependencies in the background, ~60-90s). Tell the user:
-   "Server is installing dependencies in the background... this only happens the first time. Please wait."
+2. **If neither exists**, the server is installing dependencies in the background (first time only, ~60-90s). Tell the user:
+   "The server is installing dependencies for the first time. Please wait about 60 seconds..."
    Then poll in a loop:
    - `sleep 15` then check both paths again
    - Repeat up to 8 times (2 minutes total)
    - Between each check, tell the user "Still installing... please wait."
-   - If after 8 attempts neither exists, tell the user: "Dependencies are still installing. Please close Claude and reopen with the same command — it will work instantly the next time."
+   - If after 8 attempts neither exists, tell the user: "Dependencies may have finished installing. Run `/reload-plugins` to restart the server, then run `/whatsapp:configure` again."
 
 3. **Once status.json exists**, read it with: `cat $STATE_DIR/status.json`
 
