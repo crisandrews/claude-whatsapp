@@ -164,6 +164,9 @@ const CONFIG_FILE = path.join(CHANNEL_DIR, 'config.json')
 
 interface PluginConfig {
   audioTranscription?: boolean
+  audioLanguage?: string | null
+  audioModel?: 'tiny' | 'base' | 'small'   // default: base
+  audioQuality?: 'fast' | 'balanced' | 'best' // default: balanced
 }
 
 function loadConfig(): PluginConfig {
@@ -193,10 +196,15 @@ async function initTranscriber() {
     const { OggOpusDecoder } = await import('ogg-opus-decoder')
 
     // Load whisper pipeline (uses cache if model was pre-downloaded by skill)
+    const modelSize = config.audioModel || 'base'
+    const quality = config.audioQuality || 'balanced'
+    const dtype = quality === 'best' ? 'fp32' : 'q8'
+    syslog(`loading whisper-${modelSize} (quality: ${quality}, dtype: ${dtype})`)
+
     const whisperPipeline = await pipeline(
       'automatic-speech-recognition',
-      'onnx-community/whisper-base',
-      { dtype: 'q8' },
+      `onnx-community/whisper-${modelSize}`,
+      { dtype },
     )
 
     const decoder = new OggOpusDecoder()
@@ -236,13 +244,15 @@ async function initTranscriber() {
           allSamples = resampled
         }
 
-        const config = loadConfig()
-        const lang = config.audioLanguage || null // null = auto-detect
+        const cfg = loadConfig()
+        const lang = cfg.audioLanguage || null
+        const q = cfg.audioQuality || 'balanced'
         const result = await whisperPipeline(allSamples, {
           language: lang,
           task: 'transcribe',
           chunk_length_s: 30,
           stride_length_s: 5,
+          ...(q === 'best' ? { num_beams: 5 } : {}),
         })
 
         // Concatenate all chunks (Whisper may split long audio)
