@@ -1,6 +1,6 @@
 # WhatsApp for Claude Code
 
-> **Release 1.1** — Voice transcription, autonomous mode, and reliability improvements.
+> **Release 1.2** — Audio fix, conversation logs, and configurable transcription quality.
 
 With Anthropic's recent policy changes, many users lost access to their AI agents through messaging platforms. While official channel plugins exist for [Telegram](https://github.com/anthropics/claude-plugins-official/tree/main/external_plugins/telegram) and Instagram, **WhatsApp — the world's most used messaging app — had no solution.**
 
@@ -225,6 +225,30 @@ State is stored in `.whatsapp/` inside your project directory:
 
 Reset with `/whatsapp:configure reset`.
 
+## Updating, uninstalling, and cache
+
+**Update to the latest version:**
+
+```
+/plugin update whatsapp@claude-whatsapp
+```
+
+**Uninstall:**
+
+```
+/plugin uninstall whatsapp@claude-whatsapp
+```
+
+**Clear cache (if reinstall fails or behaves unexpectedly):**
+
+Close Claude, then run in your terminal:
+
+```sh
+rm -rf ~/.claude/plugins/cache/claude-whatsapp
+```
+
+Then reopen Claude and install again.
+
 ## Troubleshooting
 
 **Voice messages transcribe in the wrong language**
@@ -240,7 +264,10 @@ Run `/whatsapp:configure` again — the server generates a fresh QR every ~20 se
 Sessions can expire if you log out from your phone or WhatsApp revokes the link. Run `/whatsapp:configure reset` then `/whatsapp:configure` to scan a new QR.
 
 **Voice transcription is slow**
-The Whisper model runs on CPU. Short messages (< 30s) typically take 2-8 seconds. For faster results, ensure no heavy CPU tasks are running in parallel.
+The Whisper model runs on CPU. Short messages (< 30s) typically take 2-8 seconds. For faster results, ensure no heavy CPU tasks are running in parallel. Try `/whatsapp:configure audio model tiny` for speed, or `/whatsapp:configure audio quality fast`.
+
+**Reinstall fails or plugin behaves unexpectedly**
+Clear the cache: close Claude, run `rm -rf ~/.claude/plugins/cache/claude-whatsapp` in terminal, reopen Claude and install again.
 
 ## Important
 

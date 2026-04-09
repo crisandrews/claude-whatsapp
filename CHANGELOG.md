@@ -1,5 +1,24 @@
 # Changelog
 
+## v1.2.0
+
+### Changes
+
+- Conversation logging: dual-format logs per day — JSONL (for RAG/memory) and Markdown (for humans) in `.whatsapp/logs/conversations/`.
+- System logging: server events (connections, errors, pairing) in `.whatsapp/logs/system.log`.
+- Configurable Whisper model: choose between `tiny` (~39MB), `base` (~77MB, default), or `small` (~250MB) via `/whatsapp:configure audio model <size>`.
+- Configurable transcription quality: `fast`, `balanced` (default), or `best` (full precision + beam search) via `/whatsapp:configure audio quality <level>`.
+- Chunked transcription: Whisper now processes audio with 30s chunks and 5s stride overlap for complete transcription of longer messages.
+
+### Fixes
+
+- Audio downloads returning 0 bytes: switched from `'buffer'` to `'stream'` mode for `downloadMediaMessage` (Baileys v7 bug).
+- Truncated transcriptions: concatenate all Whisper result chunks instead of taking only the first. Reset decoder between calls.
+- Missing watchers on first launch: `watchApproved()` and `watchConfig()` were not called in the dep-polling branch, so config changes were never detected.
+- Duplicate pairing for same user: Baileys v7 can identify one user with two JID formats (`@lid` and `@s.whatsapp.net`). Gate now checks both, pairing deduplicates across formats, and access skill adds both IDs on approval.
+- Silent error swallowing: all media download and transcription catch blocks now log errors to system.log.
+- Browser identifier: changed from `Browsers.ubuntu()` to generic Chrome to avoid platform-specific issues.
+
 ## v1.1.0
 
 ### Changes
