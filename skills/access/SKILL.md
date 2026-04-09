@@ -1,6 +1,6 @@
 ---
 name: access
-description: Manage WhatsApp channel access — approve pairings, edit allowlists, set DM/group policy. Use when the user asks to pair, approve someone, check who's allowed, or change policy for the WhatsApp channel.
+description: Manage WhatsApp channel access control — approve or deny pairings, add or remove users from the allowlist, set DM policy (pairing/allowlist/disabled), and configure group access. Use when the user asks to pair a contact, approve someone, check who's allowed, revoke access, lock down the channel, or change WhatsApp policy. Triggers on /whatsapp:access, "pair", "approve", "allowlist", "who can message", "lock down whatsapp".
 user-invocable: true
 allowed-tools:
   - Read
