@@ -121,7 +121,7 @@ By default, voice messages arrive as `[Voice message received]` with the audio f
 /whatsapp:configure audio
 ```
 
-This installs a local Whisper model (~77MB, runs entirely on your machine — no API keys needed). After restarting Claude, voice messages are automatically transcribed to text.
+This installs a local Whisper model (~77MB, runs entirely on your machine — no API keys needed). Voice messages will be automatically transcribed to text within a few seconds — no restart needed.
 
 **Setting your language (recommended):** For best accuracy, set your primary language:
 
