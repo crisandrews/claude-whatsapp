@@ -110,6 +110,31 @@ By default, voice messages arrive as `[Voice message received]` with the audio f
 
 This installs a local Whisper model (~77MB, runs entirely on your machine — no API keys needed). After restarting Claude, voice messages are automatically transcribed to text.
 
+**Setting your language (recommended):** For best results, set your primary language:
+
+```
+/whatsapp:configure audio es
+```
+
+| Code | Language |
+| --- | --- |
+| `es` | Spanish |
+| `en` | English |
+| `pt` | Portuguese |
+| `fr` | French |
+| `de` | German |
+| `it` | Italian |
+| `ja` | Japanese |
+| `zh` | Chinese |
+| `ko` | Korean |
+| `ar` | Arabic |
+| `ru` | Russian |
+| `nl` | Dutch |
+| `hi` | Hindi |
+| `tr` | Turkish |
+
+Without a language set, Whisper auto-detects — but setting it explicitly is more accurate, especially for short voice messages.
+
 Disable with `/whatsapp:configure audio off`.
 
 ## Media
@@ -138,6 +163,23 @@ Reset with `/whatsapp:configure reset`.
 - **Unofficial API** — Baileys is not endorsed by WhatsApp. Use responsibly.
 - **One linked device slot** — Unlink anytime from WhatsApp > Settings > Linked Devices.
 - **No message history** — Only sees messages as they arrive.
+
+## Troubleshooting
+
+**Voice messages transcribe in the wrong language**
+Set your language explicitly: `/whatsapp:configure audio es`. Without it, the model guesses and often defaults to English on short audio clips. Restart Claude after changing.
+
+**Server didn't start (first launch)**
+The first launch downloads dependencies (~30-60s). Run `/whatsapp:configure` — it waits automatically. If it still fails, close and reopen Claude with the channel flag.
+
+**QR code expired**
+Run `/whatsapp:configure` again — the server generates a fresh QR every ~20 seconds.
+
+**WhatsApp disconnected**
+Sessions can expire if you log out from your phone or WhatsApp revokes the link. Run `/whatsapp:configure reset` then `/whatsapp:configure` to scan a new QR.
+
+**Voice transcription is slow**
+The Whisper model runs on CPU. Short messages (< 30s) typically take 2-8 seconds. For faster results, ensure no heavy CPU tasks are running in parallel.
 
 ## Disclaimer
 

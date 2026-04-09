@@ -386,7 +386,7 @@ async function connectWhatsApp() {
         mcp.notification({
           method: 'notifications/claude/channel',
           params: {
-            content: 'WhatsApp connected successfully! Ready to receive and send messages.\n\nTip: Voice messages are not transcribed by default. To enable local transcription (no API needed), the user can run /whatsapp:configure audio',
+            content: 'WhatsApp connected successfully! Ready to receive and send messages.\n\nTip: Voice messages are not transcribed by default. To enable local transcription (no API needed), run /whatsapp:configure audio <language_code> (e.g. /whatsapp:configure audio es for Spanish)',
             meta: {
               chat_id: 'system',
               message_id: 'connected-' + Date.now(),
