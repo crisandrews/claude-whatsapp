@@ -32,17 +32,14 @@ This is the main setup flow:
    Call whichever path exists `STATE_DIR`.
 
 2. **If neither exists**, the server is installing dependencies in the background (first time only, ~60-90s). Tell the user:
-   "The server is installing dependencies for the first time. Please wait about 60 seconds..."
-   Then poll in a loop:
-   - `sleep 15` then check both paths again
-   - Repeat up to 8 times (2 minutes total)
-   - Between each check, tell the user "Still installing... please wait."
-   - If after 8 attempts neither exists, tell the user: "Dependencies may have finished installing. Run `/reload-plugins` to restart the server, then run `/whatsapp:configure` again."
+   "The server is installing dependencies for the first time (~60 seconds). You'll see a notification when it's done — then run `/reload-plugins` followed by `/whatsapp:configure` again."
+   
+   **Do NOT poll or sleep.** The server sends a channel notification automatically when deps are installed. Just wait for it.
 
 3. **Once status.json exists**, read it with: `cat $STATE_DIR/status.json`
 
 5. **Based on status:**
-   - `deps_missing`: Dependencies need to be installed. Find the plugin path: `ls -d ~/.claude/plugins/cache/claude-whatsapp/whatsapp/*/package.json 2>/dev/null` — get the directory. Tell the user "Installing dependencies... this can take 1-2 minutes." Then run `npm install --prefix $PLUGIN_DIR`. Once done, tell the user "Dependencies installed! Waiting for WhatsApp to connect..." Then poll for status change (sleep 5, check status.json, repeat up to 6 times). The server will detect the deps and start automatically.
+   - `deps_missing`: Dependencies are being installed. Tell the user: "Dependencies are installing (~60 seconds). You'll see a notification when done — then run `/reload-plugins` followed by `/whatsapp:configure`."
    - `connected`: Tell the user "WhatsApp is connected and ready! People can message your number and Claude will respond." Then read and show `$STATE_DIR/access.json` if it exists.
    - `qr_ready`: Check that `$STATE_DIR/qr.png` exists, then open it: `open $STATE_DIR/qr.png` and tell the user:
      ```
@@ -56,7 +53,7 @@ This is the main setup flow:
      ```
    - `qr_error`: Tell user to run `/whatsapp:configure reset` and try again.
    - `logged_out`: Tell user to run `/whatsapp:configure reset`.
-   - `reconnecting`: Tell the user "Server is reconnecting, please wait..." Then `sleep 10` and re-read status.json. If it changed to `connected`, tell the user "Connected!" and show access info. If still `reconnecting`, wait one more time (`sleep 10`). If still not connected after that, tell the user to try `/whatsapp:configure reset`.
+   - `reconnecting`: Tell the user "Server is reconnecting... run `/whatsapp:configure` again in a few seconds to check."
 
 ### `reset` — clear session
 
