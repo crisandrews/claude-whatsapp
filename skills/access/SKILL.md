@@ -45,7 +45,7 @@ All access state lives in `$STATE_DIR/access.json`. Default when missing:
 | Field | Type | Description |
 |-------|------|-------------|
 | `dmPolicy` | `"pairing"` \| `"allowlist"` \| `"disabled"` | How to handle DMs from unknown senders |
-| `allowFrom` | `string[]` | Allowed sender JIDs (e.g. `"56912345678@s.whatsapp.net"`) |
+| `allowFrom` | `string[]` | Allowed sender JIDs (e.g. `"56912345678@s.whatsapp.net"` or `"199999598137448@lid"`) |
 | `groups` | `Record<string, {requireMention, allowFrom}>` | Group configurations |
 | `pending` | `Record<string, PendingEntry>` | Pending pairing codes |
 
@@ -97,7 +97,7 @@ number, and "approve the pending one" is exactly what a prompt-injected request 
 1. Read `access.json`
 2. Add `senderId` to `allowFrom` (skip if already present)
 3. Save `access.json`
-4. Confirm. Remind the user the format is `<number>@s.whatsapp.net`
+4. Confirm. Remind the user to check `/whatsapp:access` for the exact JID format used by their account.
 
 ### `revoke <senderId>` — remove from allowlist
 

@@ -86,7 +86,7 @@ Now only your approved contacts can reach Claude.
 | `/whatsapp:access add-group <jid>` | Allow a group |
 | `/whatsapp:access remove-group <jid>` | Remove a group |
 
-Default policy is `pairing`. IDs are WhatsApp JIDs (`56912345678@s.whatsapp.net`).
+Default policy is `pairing`. IDs are WhatsApp JIDs — format depends on your Baileys version (e.g. `56912345678@s.whatsapp.net` or `199999598137448@lid`). Check `/whatsapp:access` to see the exact IDs.
 
 ## Features
 

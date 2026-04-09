@@ -70,18 +70,21 @@ Find `STATE_DIR` as above, then:
 
 This installs optional dependencies for local speech-to-text (Whisper model, ~77MB download). Voice messages will be automatically transcribed to text.
 
-1. Find the plugin install path. Check: `ls ~/.claude/plugins/cache/claude-whatsapp/whatsapp/*/package.json 2>/dev/null` — use the first path found. Call this `PLUGIN_DIR`.
+1. Find the plugin install path: `ls -d ~/.claude/plugins/cache/claude-whatsapp/whatsapp/*/package.json 2>/dev/null` — get the directory. Call this `PLUGIN_DIR`.
 2. Install the transcription dependencies: `npm install --prefix $PLUGIN_DIR @huggingface/transformers ogg-opus-decoder`
-3. Write the config file to enable transcription. Find `STATE_DIR` as described above, then write `{"audioTranscription": true}` to `$STATE_DIR/config.json`
-4. Tell the user:
+3. Pre-download the Whisper model. Tell the user "Downloading Whisper model (~77MB)... one-time download." Then run:
+   `node --input-type=module -e "import('@huggingface/transformers').then(m=>m.pipeline('automatic-speech-recognition','onnx-community/whisper-base',{dtype:'q8'})).then(()=>console.log('MODEL_READY')).catch(e=>{console.error(e);process.exit(1)})"`
+   This caches the model locally. It takes 30-90 seconds. If it succeeds, tell the user "Model downloaded."
+4. Write the config file. Find `STATE_DIR` as described above, then write `{"audioTranscription": true}` to `$STATE_DIR/config.json`
+5. Tell the user:
    ```
-   Audio transcription enabled! The Whisper model (~77MB) will download automatically.
-   It will activate within a few seconds — no restart needed.
+   Audio transcription enabled! Voice messages will be transcribed automatically.
+   No restart needed — activates within a few seconds.
    ```
 
 ### `audio <language>` — set transcription language
 
-If the user specifies a language code (e.g. `audio es`, `audio en`, `audio pt`), find `STATE_DIR` as above, read `$STATE_DIR/config.json`, set `audioTranscription: true` and `audioLanguage` to the code, then write it back. Also install deps if needed (step 1-2 from `audio` above). Tell the user: "Language set. Audio transcription will activate within a few seconds."
+If the user specifies a language code (e.g. `audio es`, `audio en`, `audio pt`), follow all steps from `audio` above (install deps, download model if needed), then find `STATE_DIR`, read `$STATE_DIR/config.json`, set `audioTranscription: true` and `audioLanguage` to the code, then write it back. Tell the user: "Language set to [language]. Voice messages will be transcribed automatically."
 
 Common codes: `es` (Spanish), `en` (English), `pt` (Portuguese), `fr` (French), `de` (German), `it` (Italian), `ja` (Japanese), `zh` (Chinese).
 
@@ -95,9 +98,10 @@ If just `audio` with no language, set `audioLanguage` to `null` (auto-detect).
 ### `status` — check connection only
 
 Find `STATE_DIR` as above, then:
-1. Read `$STATE_DIR/status.json` and report the state.
+1. Read `$STATE_DIR/status.json` and report the connection state.
 2. Read `$STATE_DIR/access.json` if it exists — show DM policy and allowed users count.
-3. Read `$STATE_DIR/config.json` if it exists — report if audio transcription is enabled.
+3. Read `$STATE_DIR/config.json` if it exists — report if audio transcription is enabled and language.
+4. Read `$STATE_DIR/transcriber-status.json` if it exists — report transcriber state (loading/ready/error/disabled).
 
 ## Important
 

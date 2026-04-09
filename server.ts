@@ -149,16 +149,24 @@ function loadConfig(): PluginConfig {
 }
 
 let transcriber: { transcribe: (buffer: Buffer) => Promise<string> } | null = null
+const TRANSCRIBER_STATUS_FILE = path.join(CHANNEL_DIR, 'transcriber-status.json')
+
+function writeTranscriberStatus(status: 'loading' | 'ready' | 'error' | 'disabled', error?: string) {
+  try { fs.writeFileSync(TRANSCRIBER_STATUS_FILE, JSON.stringify({ status, error, ts: Date.now() })) } catch {}
+}
 
 async function initTranscriber() {
   const config = loadConfig()
   if (!config.audioTranscription) return
 
   try {
+    writeTranscriberStatus('loading')
+    process.stderr.write('whatsapp channel: loading Whisper model...\n')
+
     const { pipeline } = await import('@huggingface/transformers')
     const { OggOpusDecoder } = await import('ogg-opus-decoder')
 
-    // Load whisper pipeline (downloads model on first use, ~77MB)
+    // Load whisper pipeline (uses cache if model was pre-downloaded by skill)
     const whisperPipeline = await pipeline(
       'automatic-speech-recognition',
       'onnx-community/whisper-base',
@@ -208,8 +216,10 @@ async function initTranscriber() {
       },
     }
 
-    process.stderr.write('whatsapp channel: audio transcription enabled (whisper-base)\n')
+    writeTranscriberStatus('ready')
+    process.stderr.write('whatsapp channel: audio transcription ready\n')
   } catch (err) {
+    writeTranscriberStatus('error', String(err))
     process.stderr.write(`whatsapp channel: audio transcription not available: ${err}\n`)
     transcriber = null
   }
@@ -660,19 +670,16 @@ async function handlePairing(senderId: string, chatId: string) {
 }
 
 // ---------------------------------------------------------------------------
-// Poll approved/ directory for completed pairings
+// Watch approved/ directory for completed pairings (event-driven)
 // ---------------------------------------------------------------------------
-setInterval(async () => {
-  if (!sock) return
-
+function watchApproved() {
   try {
-    const files = fs.readdirSync(APPROVED_DIR)
-    for (const file of files) {
-      const filepath = path.join(APPROVED_DIR, file)
+    const watcher = fs.watch(APPROVED_DIR, async (_event, filename) => {
+      if (!filename || !sock) return
+      const filepath = path.join(APPROVED_DIR, filename)
       try {
         const data = JSON.parse(fs.readFileSync(filepath, 'utf8'))
         const { senderId, chatId } = data
-        // Validate chatId format before sending
         if (senderId && chatId && chatId.includes('@') && loadAccess().allowFrom.includes(senderId)) {
           await sock.sendMessage(chatId, {
             text: 'Paired successfully! You can now chat with Claude through this conversation.',
@@ -680,24 +687,61 @@ setInterval(async () => {
         }
         fs.unlinkSync(filepath)
       } catch {
-        fs.unlinkSync(filepath)
+        try { fs.unlinkSync(filepath) } catch {}
       }
-    }
-  } catch { /* directory might not exist yet */ }
-}, 5000)
+    })
+    watcher.on('error', () => setTimeout(watchApproved, 10_000))
+  } catch {
+    // Fallback: poll every 30s if fs.watch unavailable
+    setInterval(async () => {
+      if (!sock) return
+      try {
+        for (const file of fs.readdirSync(APPROVED_DIR)) {
+          const filepath = path.join(APPROVED_DIR, file)
+          try {
+            const data = JSON.parse(fs.readFileSync(filepath, 'utf8'))
+            const { senderId, chatId } = data
+            if (senderId && chatId && chatId.includes('@') && loadAccess().allowFrom.includes(senderId)) {
+              await sock.sendMessage(chatId, { text: 'Paired successfully! You can now chat with Claude through this conversation.' })
+            }
+            fs.unlinkSync(filepath)
+          } catch { try { fs.unlinkSync(filepath) } catch {} }
+        }
+      } catch {}
+    }, 30_000)
+  }
+}
 
 // ---------------------------------------------------------------------------
-// Watch config.json for audio transcription changes (hot-reload)
+// Watch config.json for audio transcription changes (event-driven)
 // ---------------------------------------------------------------------------
-setInterval(async () => {
-  const config = loadConfig()
-  if (config.audioTranscription && !transcriber) {
-    await initTranscriber()
-  } else if (!config.audioTranscription && transcriber) {
-    transcriber = null
-    process.stderr.write('whatsapp channel: audio transcription disabled\n')
+let configDebounce: ReturnType<typeof setTimeout> | null = null
+
+function watchConfig() {
+  try {
+    const watcher = fs.watch(CHANNEL_DIR, (_event, filename) => {
+      if (filename !== 'config.json') return
+      handleConfigChange()
+    })
+    watcher.on('error', () => setTimeout(watchConfig, 10_000))
+  } catch {
+    // Fallback: poll every 30s
+    setInterval(() => handleConfigChange(), 30_000)
   }
-}, 5000)
+}
+
+async function handleConfigChange() {
+  if (configDebounce) clearTimeout(configDebounce)
+  configDebounce = setTimeout(async () => {
+    const config = loadConfig()
+    if (config.audioTranscription && !transcriber) {
+      await initTranscriber()
+    } else if (!config.audioTranscription && transcriber) {
+      transcriber = null
+      process.stderr.write('whatsapp channel: audio transcription disabled\n')
+    }
+  }, 500)
+}
 
 // ---------------------------------------------------------------------------
 // Permission relay (bidirectional)
@@ -955,6 +999,10 @@ async function main() {
 
   // Initialize audio transcription if enabled (non-blocking)
   initTranscriber().catch(() => {})
+
+  // Start file watchers (event-driven, no polling)
+  watchApproved()
+  watchConfig()
 
   // Start WhatsApp connection
   await connectWhatsApp()
