@@ -21,9 +21,17 @@ Arguments passed: `$ARGUMENTS`
 
 ---
 
+## Finding the state directory
+
+The server stores state in one of two places. Check both and use whichever exists:
+- `.whatsapp/` (project-local)
+- `~/.claude/channels/whatsapp/` (global fallback)
+
+Call this `STATE_DIR` for all paths below.
+
 ## State
 
-All access state lives in `.whatsapp/access.json`. Default when missing:
+All access state lives in `$STATE_DIR/access.json`. Default when missing:
 
 ```json
 {
