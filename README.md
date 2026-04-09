@@ -189,6 +189,76 @@ Once the agent is running, type `/mcp` inside Claude Code and enable **computer 
 
 If you have a WhatsApp number running an agent on [OpenClaw](https://github.com/openclaw/openclaw), you can try this plugin without losing anything. Just close OpenClaw (or stop that agent), scan the QR code here, and the number will work through Claude Code natively. When you're done, close Claude Code and reopen OpenClaw — your OpenClaw agent will reconnect and respond as before. Each platform re-links the WhatsApp session on startup, so they don't conflict — just don't run both at the same time on the same number.
 
+### Always-on (run as a background service)
+
+To keep your WhatsApp agent running permanently, wrap Claude Code with a process manager:
+
+**macOS (launchd):**
+
+Create `~/Library/LaunchAgents/com.whatsapp-agent.plist`:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.whatsapp-agent</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>claude</string>
+        <string>--dangerously-load-development-channels</string>
+        <string>plugin:whatsapp@claude-whatsapp</string>
+        <string>--dangerously-skip-permissions</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/Users/YOUR_USER/my-whatsapp-agent</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/tmp/whatsapp-agent.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/whatsapp-agent.err</string>
+</dict>
+</plist>
+```
+
+```sh
+launchctl load ~/Library/LaunchAgents/com.whatsapp-agent.plist
+```
+
+**Linux (systemd):**
+
+Create `~/.config/systemd/user/whatsapp-agent.service`:
+
+```ini
+[Unit]
+Description=WhatsApp Agent (Claude Code)
+
+[Service]
+WorkingDirectory=/home/YOUR_USER/my-whatsapp-agent
+ExecStart=claude --dangerously-load-development-channels plugin:whatsapp@claude-whatsapp --dangerously-skip-permissions
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target
+```
+
+```sh
+systemctl --user enable --now whatsapp-agent
+```
+
+**Windows (Task Scheduler):**
+
+Create a scheduled task that runs at login with the command:
+```
+claude --dangerously-load-development-channels plugin:whatsapp@claude-whatsapp --dangerously-skip-permissions
+```
+Set the "Start in" directory to your agent folder.
+
 ### Multiple agents
 
 Each agent folder has its own WhatsApp session and access control:
