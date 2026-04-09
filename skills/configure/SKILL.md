@@ -9,7 +9,9 @@ allowed-tools:
   - Bash(open *)
   - Bash(sleep *)
   - Bash(cat *)
+  - Bash(npm install *)
   - Read
+  - Write
 ---
 
 # /whatsapp:configure — WhatsApp Channel Setup
@@ -59,10 +61,29 @@ This is the main setup flow:
 3. `rm -f .whatsapp/qr.png`
 4. Tell user: "Session cleared. Run `/whatsapp:configure` to get a new QR code."
 
+### `audio` — enable local voice message transcription
+
+This installs optional dependencies for local speech-to-text (Whisper model, ~77MB download). Voice messages will be automatically transcribed to text.
+
+1. Find the plugin install path. Check: `ls ~/.claude/plugins/cache/claude-whatsapp/whatsapp/*/package.json 2>/dev/null` — use the first path found. Call this `PLUGIN_DIR`.
+2. Install the transcription dependencies: `npm install --prefix $PLUGIN_DIR @huggingface/transformers ogg-opus-decoder`
+3. Write the config file to enable transcription: write `{"audioTranscription": true}` to `.whatsapp/config.json`
+4. Tell the user:
+   ```
+   Audio transcription enabled! The Whisper model (~77MB) will download on the next voice message.
+   Restart Claude to activate: close and reopen with the --dangerously-load-development-channels flag.
+   ```
+
+### `audio off` — disable voice transcription
+
+1. Read `.whatsapp/config.json`, set `audioTranscription` to `false`, write it back.
+2. Tell the user: "Audio transcription disabled. Voice messages will arrive as [Voice message received]."
+
 ### `status` — check connection only
 
 1. Read `.whatsapp/status.json` and report the state.
 2. Read `.whatsapp/access.json` if it exists — show DM policy and allowed users count.
+3. Read `.whatsapp/config.json` if it exists — report if audio transcription is enabled.
 
 ## Important
 
