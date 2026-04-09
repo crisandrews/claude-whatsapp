@@ -74,6 +74,17 @@ Default policy is `pairing`. IDs are WhatsApp JIDs (`56912345678@s.whatsapp.net`
 | `react` | Emoji reaction on a message. |
 | `download_attachment` | Access downloaded media from the inbox. |
 
+## Reactions
+
+Emoji reactions on messages are forwarded to Claude as commands:
+
+| Reaction | Meaning |
+| --- | --- |
+| 👍 | "Proceed", "ok", "yes" — confirms or approves |
+| 👎 | "No", "stop", "cancel" — rejects |
+
+Long-press any message in the chat and tap a reaction. Claude will interpret it in context.
+
 ## Media
 
 Inbound photos, voice messages, videos, and documents are downloaded to `~/.claude/channels/whatsapp/inbox/`. Max 50 MB.
