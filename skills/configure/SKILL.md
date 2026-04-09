@@ -32,12 +32,12 @@ This is the main setup flow:
    Use whichever path exists. Call it `STATE_DIR` for the rest of the steps.
 
 2. **If neither exists**, the server is still starting up (first launch installs dependencies ~30 seconds). Tell the user:
-   "Server is starting up and installing dependencies... this only happens the first time (can take up to 60 seconds)."
+   "Server is starting up and installing dependencies... this only happens the first time (can take up to 2 minutes)."
    Then poll in a loop:
    - `sleep 10` then check both paths again
-   - Repeat up to 6 times (60 seconds total)
+   - Repeat up to 12 times (120 seconds total)
    - Between each check, tell the user "Still waiting..."
-   - If after 6 attempts neither exists, tell the user: "Server didn't start. Try closing Claude and reopening with `claude --dangerously-load-development-channels plugin:whatsapp@claude-whatsapp`"
+   - If after 12 attempts neither exists, tell the user: "Server didn't start. Try closing Claude and reopening with `claude --dangerously-load-development-channels plugin:whatsapp@claude-whatsapp --dangerously-skip-permissions`"
 
 3. **Once status.json exists**, read it with: `cat $STATE_DIR/status.json`
 
@@ -71,16 +71,16 @@ This installs optional dependencies for local speech-to-text (Whisper model, ~77
 
 1. Find the plugin install path. Check: `ls ~/.claude/plugins/cache/claude-whatsapp/whatsapp/*/package.json 2>/dev/null` — use the first path found. Call this `PLUGIN_DIR`.
 2. Install the transcription dependencies: `npm install --prefix $PLUGIN_DIR @huggingface/transformers ogg-opus-decoder`
-3. Write the config file to enable transcription: write `{"audioTranscription": true}` to `.whatsapp/config.json`
+3. Write the config file to enable transcription. Find `STATE_DIR` as described above, then write `{"audioTranscription": true}` to `$STATE_DIR/config.json`
 4. Tell the user:
    ```
-   Audio transcription enabled! The Whisper model (~77MB) will download on the next voice message.
-   Restart Claude to activate: close and reopen with the --dangerously-load-development-channels flag.
+   Audio transcription enabled! The Whisper model (~77MB) will download automatically.
+   It will activate within a few seconds — no restart needed.
    ```
 
 ### `audio <language>` — set transcription language
 
-If the user specifies a language code (e.g. `audio es`, `audio en`, `audio pt`), read `.whatsapp/config.json` (or `$STATE_DIR/config.json`), set `audioTranscription: true` and `audioLanguage` to the code, then write it back. Tell the user the language was set and they need to restart.
+If the user specifies a language code (e.g. `audio es`, `audio en`, `audio pt`), find `STATE_DIR` as above, read `$STATE_DIR/config.json`, set `audioTranscription: true` and `audioLanguage` to the code, then write it back. Also install deps if needed (step 1-2 from `audio` above). Tell the user: "Language set. Audio transcription will activate within a few seconds."
 
 Common codes: `es` (Spanish), `en` (English), `pt` (Portuguese), `fr` (French), `de` (German), `it` (Italian), `ja` (Japanese), `zh` (Chinese).
 
@@ -88,7 +88,7 @@ If just `audio` with no language, set `audioLanguage` to `null` (auto-detect).
 
 ### `audio off` — disable voice transcription
 
-1. Read `.whatsapp/config.json`, set `audioTranscription` to `false`, write it back.
+1. Find `STATE_DIR` as above, read `$STATE_DIR/config.json`, set `audioTranscription` to `false`, write it back.
 2. Tell the user: "Audio transcription disabled. Voice messages will arrive as [Voice message received]."
 
 ### `status` — check connection only

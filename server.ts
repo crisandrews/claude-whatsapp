@@ -658,6 +658,19 @@ setInterval(async () => {
 }, 5000)
 
 // ---------------------------------------------------------------------------
+// Watch config.json for audio transcription changes (hot-reload)
+// ---------------------------------------------------------------------------
+setInterval(async () => {
+  const config = loadConfig()
+  if (config.audioTranscription && !transcriber) {
+    await initTranscriber()
+  } else if (!config.audioTranscription && transcriber) {
+    transcriber = null
+    process.stderr.write('whatsapp channel: audio transcription disabled\n')
+  }
+}, 5000)
+
+// ---------------------------------------------------------------------------
 // Permission relay (bidirectional)
 // ---------------------------------------------------------------------------
 // Note: Permission relay is handled via raw message handler on the transport
