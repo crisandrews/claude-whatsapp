@@ -75,11 +75,12 @@ This installs optional dependencies for local speech-to-text (Whisper model, ~77
 3. Pre-download the Whisper model. Tell the user "Downloading Whisper model (~77MB)... one-time download." Then run:
    `node --input-type=module -e "import('@huggingface/transformers').then(m=>m.pipeline('automatic-speech-recognition','onnx-community/whisper-base',{dtype:'q8'})).then(()=>console.log('MODEL_READY')).catch(e=>{console.error(e);process.exit(1)})"`
    This caches the model locally. It takes 30-90 seconds. If it succeeds, tell the user "Model downloaded."
-4. Write the config file. Find `STATE_DIR` as described above, then write `{"audioTranscription": true}` to `$STATE_DIR/config.json`
+4. Clear any stale transcriber status: `rm -f $STATE_DIR/transcriber-status.json`
+5. Write the config file. Find `STATE_DIR` as described above, then write `{"audioTranscription": true}` to `$STATE_DIR/config.json`
 5. Tell the user:
    ```
    Audio transcription enabled! Voice messages will be transcribed automatically.
-   No restart needed — activates within a few seconds.
+   No restart needed — activates within a few seconds. If it doesn't work, run /reload-plugins.
    ```
 
 ### `audio <language>` — set transcription language
