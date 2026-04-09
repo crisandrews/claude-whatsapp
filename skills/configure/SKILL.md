@@ -32,10 +32,10 @@ This is the main setup flow:
    Use whichever path exists. Call it `STATE_DIR` for the rest of the steps.
 
 2. **If neither exists**, the server is still starting up (first launch installs dependencies ~30 seconds). Tell the user:
-   "Server is starting up and installing dependencies... this only happens the first time."
+   "Server is starting up and installing dependencies... this only happens the first time (can take up to 60 seconds)."
    Then poll in a loop:
-   - `sleep 5` then check both paths again
-   - Repeat up to 6 times (30 seconds total)
+   - `sleep 10` then check both paths again
+   - Repeat up to 6 times (60 seconds total)
    - Between each check, tell the user "Still waiting..."
    - If after 6 attempts neither exists, tell the user: "Server didn't start. Try closing Claude and reopening with `claude --dangerously-load-development-channels plugin:whatsapp@claude-whatsapp`"
 
