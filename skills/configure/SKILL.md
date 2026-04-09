@@ -51,6 +51,7 @@ This is the main setup flow:
 4. **Once status.json exists**, read it with: `cat $STATE_DIR/status.json`
 
 5. **Based on status:**
+   - `deps_missing`: Dependencies need to be installed. Find the plugin path: `ls -d ~/.claude/plugins/cache/claude-whatsapp/whatsapp/*/package.json 2>/dev/null` — get the directory. Tell the user "Installing dependencies... this can take 1-2 minutes." Then run `npm install --prefix $PLUGIN_DIR`. Once done, tell the user "Dependencies installed! Waiting for WhatsApp to connect..." Then poll for status change (sleep 5, check status.json, repeat up to 6 times). The server will detect the deps and start automatically.
    - `connected`: Tell the user "WhatsApp is connected and ready! People can message your number and Claude will respond." Then read and show `$STATE_DIR/access.json` if it exists.
    - `qr_ready`: Check that `$STATE_DIR/qr.png` exists, then open it: `open $STATE_DIR/qr.png` and tell the user:
      ```

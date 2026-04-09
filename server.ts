@@ -4,23 +4,52 @@ import {
   ListToolsRequestSchema,
   CallToolRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js'
-import makeWASocket, {
-  useMultiFileAuthState,
-  DisconnectReason,
-  downloadMediaMessage,
-  getContentType,
-  Browsers,
-  type WASocket,
-  type BaileysEventMap,
-  type proto,
-} from '@whiskeysockets/baileys'
-import { Boom } from '@hapi/boom'
-import pino from 'pino'
 import fs from 'fs'
 import path from 'path'
 import crypto from 'crypto'
 import os from 'os'
-import QRCode from 'qrcode'
+
+// ---------------------------------------------------------------------------
+// Dynamic imports — Baileys, QRCode, Boom are loaded AFTER MCP handshake
+// so the server starts instantly even if deps aren't installed yet.
+// ---------------------------------------------------------------------------
+let makeWASocket: any
+let useMultiFileAuthState: any
+let DisconnectReason: any
+let downloadMediaMessage: any
+let getContentType: any
+let Browsers: any
+let Boom: any
+let pino: any
+let QRCode: any
+let depsLoaded = false
+
+async function loadDeps(): Promise<boolean> {
+  if (depsLoaded) return true
+  try {
+    const baileys = await import('@whiskeysockets/baileys')
+    makeWASocket = baileys.default
+    useMultiFileAuthState = baileys.useMultiFileAuthState
+    DisconnectReason = baileys.DisconnectReason
+    downloadMediaMessage = baileys.downloadMediaMessage
+    getContentType = baileys.getContentType
+    Browsers = baileys.Browsers
+
+    const boom = await import('@hapi/boom')
+    Boom = boom.Boom
+
+    const pinoMod = await import('pino')
+    pino = pinoMod.default
+
+    const qr = await import('qrcode')
+    QRCode = qr.default
+
+    depsLoaded = true
+    return true
+  } catch {
+    return false
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Paths — project-scoped if CLAUDE_PROJECT_DIR is set, global otherwise
@@ -62,7 +91,7 @@ const MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024 // 50 MB
 // ---------------------------------------------------------------------------
 // Logger (silent for MCP stdio)
 // ---------------------------------------------------------------------------
-const logger = pino({ level: 'silent' }) as any
+let logger: any = { info() {}, warn() {}, error() {}, debug() {}, trace() {}, child() { return this } }
 
 // ---------------------------------------------------------------------------
 // Global error handlers – prevent silent crashes
@@ -892,13 +921,42 @@ process.on('SIGINT', shutdown)
 // Start
 // ---------------------------------------------------------------------------
 async function main() {
-  // Start MCP server FIRST (uses stdout for protocol)
+  // Start MCP server FIRST — must respond to handshake immediately
   await mcp.connect(new StdioServerTransport())
+
+  // Try to load Baileys and other heavy deps
+  const ready = await loadDeps()
+
+  if (!ready) {
+    // Deps not installed yet — write status so the skill knows to install them
+    writeStatus('deps_missing')
+    mcp.notification({
+      method: 'notifications/claude/channel',
+      params: {
+        content: 'WhatsApp dependencies are not installed yet. Run /whatsapp:configure to set up.',
+        meta: { chat_id: 'system', message_id: 'deps-' + Date.now(), user: 'system', user_id: 'system', ts: new Date().toISOString() },
+      },
+    })
+
+    // Poll for deps every 10s (skill may install them)
+    const depCheck = setInterval(async () => {
+      if (await loadDeps()) {
+        clearInterval(depCheck)
+        logger = pino({ level: 'silent' })
+        initTranscriber().catch(() => {})
+        await connectWhatsApp()
+      }
+    }, 10_000)
+    return
+  }
+
+  // Deps loaded — initialize logger and connect
+  logger = pino({ level: 'silent' })
 
   // Initialize audio transcription if enabled (non-blocking)
   initTranscriber().catch(() => {})
 
-  // Then start WhatsApp connection (notifications require MCP to be ready)
+  // Start WhatsApp connection
   await connectWhatsApp()
 }
 
