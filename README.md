@@ -237,7 +237,7 @@ Reset with `/whatsapp:configure reset`.
 /reload-plugins
 ```
 
-If you see a message about dependencies installing, wait a moment and run `/reload-plugins` a second time. Then run `/whatsapp:configure` to verify the connection. This does NOT reset your session or access control.
+Wait for Claude to respond — it will tell you what to do next. If it mentions dependencies installing, wait and run `/reload-plugins` again. Once Claude confirms the connection is active, you're done. This does NOT reset your session or access control.
 
 **Uninstall:**
 
