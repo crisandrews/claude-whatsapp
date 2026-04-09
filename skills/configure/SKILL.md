@@ -68,24 +68,16 @@ Find `STATE_DIR` as above, then:
 
 ### `audio` — enable local voice message transcription
 
-This installs optional dependencies for local speech-to-text (Whisper model, ~77MB download). Voice messages will be automatically transcribed to text.
+Enables local speech-to-text. The Whisper model (~77MB) downloads on first voice message and is cached permanently.
 
-1. Find the plugin install path: `ls -d ~/.claude/plugins/cache/claude-whatsapp/whatsapp/*/package.json 2>/dev/null` — get the directory. Call this `PLUGIN_DIR`.
-2. Install the transcription dependencies: `npm install --prefix $PLUGIN_DIR @huggingface/transformers ogg-opus-decoder`
-3. Pre-download the Whisper model. Tell the user "Downloading Whisper model (~77MB)... one-time download." Then run:
-   `node --input-type=module -e "import('@huggingface/transformers').then(m=>m.pipeline('automatic-speech-recognition','onnx-community/whisper-base',{dtype:'q8'})).then(()=>console.log('MODEL_READY')).catch(e=>{console.error(e);process.exit(1)})"`
-   This caches the model locally. It takes 30-90 seconds. If it succeeds, tell the user "Model downloaded."
-4. Clear any stale transcriber status: `rm -f $STATE_DIR/transcriber-status.json`
-5. Write the config file. Find `STATE_DIR` as described above, then write `{"audioTranscription": true}` to `$STATE_DIR/config.json`
-5. Tell the user:
-   ```
-   Audio transcription enabled! Voice messages will be transcribed automatically.
-   No restart needed — activates within a few seconds. If it doesn't work, run /reload-plugins.
-   ```
+1. Find `STATE_DIR` as described above.
+2. Clear any stale transcriber status: `rm -f $STATE_DIR/transcriber-status.json`
+3. Write `{"audioTranscription": true}` to `$STATE_DIR/config.json`
+4. Tell the user: "Audio transcription enabled! The Whisper model (~77MB) will download on the first voice message and be cached for future use."
 
 ### `audio <language>` — set transcription language
 
-If the user specifies a language code (e.g. `audio es`, `audio en`, `audio pt`), follow all steps from `audio` above (install deps, download model if needed), then find `STATE_DIR`, read `$STATE_DIR/config.json`, set `audioTranscription: true` and `audioLanguage` to the code, then write it back. Tell the user: "Language set to [language]. Voice messages will be transcribed automatically."
+If the user specifies a language code (e.g. `audio es`, `audio en`, `audio pt`), find `STATE_DIR`, read `$STATE_DIR/config.json`, set `audioTranscription: true` and `audioLanguage` to the code, then write it back. Also clear stale status: `rm -f $STATE_DIR/transcriber-status.json`. Tell the user: "Language set to [language]. Voice messages will be transcribed automatically."
 
 Common codes: `es` (Spanish), `en` (English), `pt` (Portuguese), `fr` (French), `de` (German), `it` (Italian), `ja` (Japanese), `zh` (Chinese).
 

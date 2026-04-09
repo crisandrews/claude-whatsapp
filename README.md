@@ -1,6 +1,6 @@
 # WhatsApp for Claude Code
 
-> **Release 1.2** — Audio fix, conversation logs, and configurable transcription quality.
+> **Release 1.3** — Bundled audio deps, simplified voice setup.
 
 With Anthropic's recent policy changes, many users lost access to their AI agents through messaging platforms. While official channel plugins exist for [Telegram](https://github.com/anthropics/claude-plugins-official/tree/main/external_plugins/telegram) and Instagram, **WhatsApp — the world's most used messaging app — had no solution.**
 
@@ -121,7 +121,7 @@ By default, voice messages arrive as `[Voice message received]` with the audio f
 /whatsapp:configure audio
 ```
 
-This installs a local Whisper model (~77MB, runs entirely on your machine — no API keys needed). Voice messages will be automatically transcribed to text within a few seconds — no restart needed.
+The Whisper model (~77MB) downloads on the first voice message and is cached permanently. Runs entirely on your machine — no API keys needed.
 
 **Setting your language (recommended):** For best accuracy, set your primary language:
 
@@ -262,7 +262,6 @@ Then reopen Claude and install again.
 - **QR code expired** — Run `/whatsapp:configure` again. The server generates a fresh QR every ~20 seconds.
 - **WhatsApp disconnected** — Sessions can expire if you log out from your phone. Run `/whatsapp:configure reset` then `/whatsapp:configure` to scan a new QR.
 - **Voice transcription is slow** — Whisper runs on CPU. Try `/whatsapp:configure audio model tiny` for speed, or `/whatsapp:configure audio quality fast`.
-- **Audio transcription stops working after update** — Updates reinstall core dependencies, which can remove the optional audio packages. Run `/whatsapp:configure audio es` (or your language) again to re-enable.
 - **Reinstall fails or plugin behaves unexpectedly** — Clear the cache: close Claude, run `rm -rf ~/.claude/plugins/cache/claude-whatsapp` in terminal, reopen and install again.
 
 ## Important

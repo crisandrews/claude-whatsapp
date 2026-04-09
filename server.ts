@@ -269,15 +269,6 @@ async function initTranscriber() {
     writeTranscriberStatus('error', String(err))
     syslog(`audio transcription not available: ${err}`)
     transcriber = null
-
-    // Retry after 30s in case deps were just installed
-    setTimeout(() => {
-      const cfg = loadConfig()
-      if (cfg.audioTranscription && !transcriber) {
-        syslog('retrying audio transcription init...')
-        initTranscriber().catch(() => {})
-      }
-    }, 30_000)
   }
 }
 

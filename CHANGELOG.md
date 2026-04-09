@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.3.0
+
+### Changes
+
+- Audio deps bundled: `@huggingface/transformers` and `ogg-opus-decoder` now included in main dependencies. No separate install step needed.
+- Simplified audio setup: `/whatsapp:configure audio es` only writes config — no npm install or model pre-download step.
+- Whisper model downloads on first voice message and is cached permanently.
+
+### Fixes
+
+- Audio transcription not activating after update: caused by Node.js caching failed dynamic imports. Now deps are always available since they're bundled.
+
 ## v1.2.1
 
 ### Fixes
