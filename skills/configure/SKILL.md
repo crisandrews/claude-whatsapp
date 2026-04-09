@@ -90,6 +90,22 @@ Common codes: `es` (Spanish), `en` (English), `pt` (Portuguese), `fr` (French), 
 
 If just `audio` with no language, set `audioLanguage` to `null` (auto-detect).
 
+### `audio model <tiny|base|small>` — change Whisper model size
+
+Read `$STATE_DIR/config.json`, set `audioModel` to the value, write it back. Tell the user:
+- `tiny` (~39MB) — fastest, lower accuracy
+- `base` (~77MB, default) — good balance
+- `small` (~250MB) — best accuracy, slower
+
+The new model downloads on next voice message. Requires restart or `/reload-plugins`.
+
+### `audio quality <fast|balanced|best>` — set transcription quality
+
+Read `$STATE_DIR/config.json`, set `audioQuality` to the value, write it back. Tell the user:
+- `fast` — quantized model, no beam search
+- `balanced` (default) — quantized model, standard decoding
+- `best` — full precision (fp32), beam search (5 beams). Slower but most accurate.
+
 ### `audio off` — disable voice transcription
 
 1. Find `STATE_DIR` as above, read `$STATE_DIR/config.json`, set `audioTranscription` to `false`, write it back.

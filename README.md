@@ -140,6 +140,30 @@ This installs a local Whisper model (~77MB, runs entirely on your machine — no
 
 Without a language set, Whisper auto-detects — but setting it explicitly is more accurate, especially for short voice messages.
 
+**Model size** (tradeoff: accuracy vs speed):
+
+```
+/whatsapp:configure audio model small
+```
+
+| Model | Size | Speed | Accuracy |
+| --- | --- | --- | --- |
+| `tiny` | ~39 MB | Fastest | Lower |
+| `base` | ~77 MB | Balanced | Good (default) |
+| `small` | ~250 MB | Slower | Best |
+
+**Quality** (tradeoff: precision vs speed):
+
+```
+/whatsapp:configure audio quality best
+```
+
+| Quality | Description |
+| --- | --- |
+| `fast` | Quantized, no beam search |
+| `balanced` | Quantized, standard decoding (default) |
+| `best` | Full precision, 5-beam search. Slowest but most accurate |
+
 Disable with `/whatsapp:configure audio off`.
 
 ## Going further
