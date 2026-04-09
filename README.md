@@ -1,6 +1,6 @@
 # WhatsApp for Claude Code
 
-> **Release 1.0** — First stable release.
+> **Release 1.1** — Voice transcription, autonomous mode, and reliability improvements.
 
 With Anthropic's recent policy changes, many users lost access to their AI agents through messaging platforms. While official channel plugins exist for [Telegram](https://github.com/anthropics/claude-plugins-official/tree/main/external_plugins/telegram) and Instagram, **WhatsApp — the world's most used messaging app — had no solution.**
 
