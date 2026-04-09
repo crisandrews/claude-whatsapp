@@ -277,8 +277,10 @@ function gate(senderId: string, chatId: string, isGroup: boolean): GateResult {
 
   if (access.dmPolicy === 'disabled') return 'drop'
 
-  // Check per-user allowlist
+  // Check per-user allowlist (check both senderId and chatId — Baileys v7
+  // can identify the same user with different JID formats: @lid and @s.whatsapp.net)
   if (access.allowFrom.includes(senderId)) return 'deliver'
+  if (!isGroup && access.allowFrom.includes(chatId)) return 'deliver'
 
   // Check group config
   if (isGroup) {
@@ -640,8 +642,11 @@ async function handlePairing(senderId: string, chatId: string) {
     if (entry.expiresAt < now) delete access.pending[code]
   }
 
-  // Check if already pending for this sender
-  const existing = Object.entries(access.pending).find(([, e]) => e.senderId === senderId)
+  // Check if already pending for this sender (match both senderId and chatId
+  // since Baileys v7 can use different JID formats for the same user)
+  const existing = Object.entries(access.pending).find(
+    ([, e]) => e.senderId === senderId || e.chatId === chatId || e.senderId === chatId || e.chatId === senderId
+  )
   if (existing) {
     const [code, entry] = existing
     if (entry.replies >= 2) {
