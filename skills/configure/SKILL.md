@@ -56,7 +56,7 @@ This is the main setup flow:
      ```
    - `qr_error`: Tell user to run `/whatsapp:configure reset` and try again.
    - `logged_out`: Tell user to run `/whatsapp:configure reset`.
-   - `reconnecting`: Tell user "Server is reconnecting... wait a moment and run `/whatsapp:configure` again."
+   - `reconnecting`: Tell the user "Server is reconnecting, please wait..." Then `sleep 10` and re-read status.json. If it changed to `connected`, tell the user "Connected!" and show access info. If still `reconnecting`, wait one more time (`sleep 10`). If still not connected after that, tell the user to try `/whatsapp:configure reset`.
 
 ### `reset` — clear session
 
