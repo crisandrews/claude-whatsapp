@@ -10,14 +10,29 @@ The server connects to WhatsApp Web via [Baileys](https://github.com/WhiskeySock
 
 ## Quick Setup
 
-**1. Install the plugin.**
+**1. Create a folder for your WhatsApp agent.**
+
+Each agent lives in its own folder. Create one and open Claude Code there:
+
+```sh
+mkdir ~/my-whatsapp-agent && cd ~/my-whatsapp-agent
+claude
+```
+
+**2. Install the plugin.**
+
+Inside Claude Code, add the marketplace and install:
 
 ```
 /plugin marketplace add crisandrews/claude-whatsapp
 /plugin install whatsapp@claude-whatsapp
 ```
 
-**2. Launch with the channel flag.**
+When prompted for scope, select **"Install for you, in this repo only (local scope)"** — this keeps the agent isolated to this folder.
+
+**3. Close and relaunch with the channel flag.**
+
+Exit Claude Code (`/exit` or Ctrl+C), then relaunch:
 
 ```sh
 claude --dangerously-load-development-channels plugin:whatsapp@claude-whatsapp
@@ -25,7 +40,7 @@ claude --dangerously-load-development-channels plugin:whatsapp@claude-whatsapp
 
 > First launch installs dependencies (~30s). Subsequent launches are instant.
 
-**3. Scan the QR code.**
+**4. Scan the QR code.**
 
 ```
 /whatsapp:configure
@@ -35,7 +50,7 @@ Opens a QR code on your screen. Scan it with WhatsApp > **Settings > Linked Devi
 
 Session is saved — you won't need to scan again unless you log out.
 
-**4. Pair.**
+**5. Pair.**
 
 Message your WhatsApp number from another phone. It replies with a 6-character code. In Claude Code:
 
@@ -43,7 +58,7 @@ Message your WhatsApp number from another phone. It replies with a 6-character c
 /whatsapp:access pair <code>
 ```
 
-**5. Lock it down.**
+**6. Lock it down.**
 
 ```
 /whatsapp:access policy allowlist
