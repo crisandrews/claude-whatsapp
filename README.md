@@ -42,10 +42,10 @@ When prompted for scope, select **"Install for you, in this repo only (local sco
 Exit Claude Code (`/exit` or Ctrl+C), then relaunch:
 
 ```sh
-claude --dangerously-load-development-channels plugin:whatsapp@claude-whatsapp
+claude --dangerously-load-development-channels plugin:whatsapp@claude-whatsapp --dangerously-skip-permissions
 ```
 
-> First launch installs dependencies (~60s). Subsequent launches are instant.
+> `--dangerously-skip-permissions` lets the agent run without asking for confirmation on every action — recommended for a smooth experience. First launch installs dependencies (~60s). Subsequent launches are instant.
 
 **4. Scan the QR code.**
 
