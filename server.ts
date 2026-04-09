@@ -518,6 +518,9 @@ async function handleInbound(msg: proto.IWebMessageInfo) {
 
   if (result === 'drop') return
 
+  // Show "typing..." indicator while Claude processes the message
+  try { await sock!.sendPresenceUpdate('composing', chatId) } catch {}
+
   if (result === 'pair') {
     await handlePairing(senderId, chatId)
     return
@@ -915,6 +918,9 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       const { chat_id, text, reply_to, file_path } = args
       assertAllowedChat(chat_id)
 
+      // Show typing indicator
+      try { await sock.sendPresenceUpdate('composing', chat_id) } catch {}
+
       // Handle file attachment
       if (file_path) {
         const absPath = path.resolve(file_path)
@@ -967,6 +973,9 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
           { quoted: i === 0 ? (quoted as any) : undefined },
         )
       }
+
+      // Clear typing indicator
+      try { await sock.sendPresenceUpdate('paused', chat_id) } catch {}
 
       // Log outbound message
       logConversation('out', 'Claude', text, { chat_id })
