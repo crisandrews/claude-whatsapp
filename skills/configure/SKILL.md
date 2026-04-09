@@ -26,22 +26,31 @@ Arguments passed: `$ARGUMENTS`
 
 This is the main setup flow:
 
-1. **Find the state directory.** The server stores state in one of two places. Check both:
+1. **Check if dependencies are installed.** Run: `ls ~/.claude/plugins/cache/claude-whatsapp/whatsapp/*/node_modules/@whiskeysockets 2>/dev/null`
+
+   If the directory does NOT exist, this is the first launch and dependencies need to be installed. Find the plugin path:
+   `ls -d ~/.claude/plugins/cache/claude-whatsapp/whatsapp/*/package.json 2>/dev/null` — get the directory (remove `/package.json` from the path). Call this `PLUGIN_DIR`.
+
+   Tell the user: "Installing dependencies for the first time... this can take 1-2 minutes."
+   Then run: `npm install --prefix $PLUGIN_DIR`
+
+   This runs in the foreground so the user sees progress. Once done, tell the user: "Dependencies installed! The server should now start. Checking..."
+
+2. **Find the state directory.** The server stores state in one of two places. Check both:
    - `ls .whatsapp/status.json 2>/dev/null` (project-local)
    - `ls ~/.claude/channels/whatsapp/status.json 2>/dev/null` (global fallback)
    Use whichever path exists. Call it `STATE_DIR` for the rest of the steps.
 
-2. **If neither exists**, the server is still starting up (first launch installs dependencies ~30 seconds). Tell the user:
-   "Server is starting up and installing dependencies... this only happens the first time (can take up to 2 minutes)."
+3. **If neither exists**, the server is starting up. Tell the user: "Server is starting, please wait..."
    Then poll in a loop:
-   - `sleep 10` then check both paths again
-   - Repeat up to 12 times (120 seconds total)
+   - `sleep 5` then check both paths again
+   - Repeat up to 6 times (30 seconds total)
    - Between each check, tell the user "Still waiting..."
-   - If after 12 attempts neither exists, tell the user: "Server didn't start. Try closing Claude and reopening with `claude --dangerously-load-development-channels plugin:whatsapp@claude-whatsapp --dangerously-skip-permissions`"
+   - If after 6 attempts neither exists, tell the user: "Server didn't start. Try closing Claude and reopening with `claude --dangerously-load-development-channels plugin:whatsapp@claude-whatsapp --dangerously-skip-permissions`"
 
-3. **Once status.json exists**, read it with: `cat $STATE_DIR/status.json`
+4. **Once status.json exists**, read it with: `cat $STATE_DIR/status.json`
 
-4. **Based on status:**
+5. **Based on status:**
    - `connected`: Tell the user "WhatsApp is connected and ready! People can message your number and Claude will respond." Then read and show `$STATE_DIR/access.json` if it exists.
    - `qr_ready`: Check that `$STATE_DIR/qr.png` exists, then open it: `open $STATE_DIR/qr.png` and tell the user:
      ```
