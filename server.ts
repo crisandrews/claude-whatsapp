@@ -168,7 +168,12 @@ async function initTranscriber() {
           samples = resampled
         }
 
-        const result = await whisperPipeline(samples)
+        const config = loadConfig()
+        const lang = config.audioLanguage || null // null = auto-detect
+        const result = await whisperPipeline(samples, {
+          language: lang,
+          task: 'transcribe',
+        })
         const text = Array.isArray(result) ? result[0]?.text : (result as any)?.text
         return text?.trim() || '[Transcription empty]'
       },

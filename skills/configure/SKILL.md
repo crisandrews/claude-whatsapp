@@ -78,6 +78,14 @@ This installs optional dependencies for local speech-to-text (Whisper model, ~77
    Restart Claude to activate: close and reopen with the --dangerously-load-development-channels flag.
    ```
 
+### `audio <language>` — set transcription language
+
+If the user specifies a language code (e.g. `audio es`, `audio en`, `audio pt`), read `.whatsapp/config.json` (or `$STATE_DIR/config.json`), set `audioTranscription: true` and `audioLanguage` to the code, then write it back. Tell the user the language was set and they need to restart.
+
+Common codes: `es` (Spanish), `en` (English), `pt` (Portuguese), `fr` (French), `de` (German), `it` (Italian), `ja` (Japanese), `zh` (Chinese).
+
+If just `audio` with no language, set `audioLanguage` to `null` (auto-detect).
+
 ### `audio off` — disable voice transcription
 
 1. Read `.whatsapp/config.json`, set `audioTranscription` to `false`, write it back.
