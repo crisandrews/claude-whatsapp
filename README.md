@@ -102,11 +102,24 @@ Long-press any message in the chat and tap a reaction. Claude will interpret it 
 
 ## Media
 
-Inbound photos, voice messages, videos, and documents are downloaded to `~/.claude/channels/whatsapp/inbox/`. Max 50 MB.
+Inbound photos, voice messages, videos, and documents are downloaded to `.whatsapp/inbox/` inside your project directory. Max 50 MB.
 
 ## Session
 
-Saved in `~/.claude/channels/whatsapp/auth/`. Reset with `/whatsapp:configure reset`.
+Each agent folder has its own WhatsApp session. State is stored in `.whatsapp/` inside your project directory:
+
+```
+~/my-whatsapp-agent/.whatsapp/
+├── auth/           # WhatsApp session keys
+├── inbox/          # Downloaded media
+├── approved/       # Pairing signals
+├── access.json     # Access control
+└── status.json     # Connection state
+```
+
+This means you can have multiple agents with different WhatsApp numbers — each folder is independent.
+
+Reset with `/whatsapp:configure reset`.
 
 ## Important
 

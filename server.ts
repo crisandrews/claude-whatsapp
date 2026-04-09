@@ -23,9 +23,12 @@ import os from 'os'
 import QRCode from 'qrcode'
 
 // ---------------------------------------------------------------------------
-// Paths
+// Paths — project-scoped if CLAUDE_PROJECT_DIR is set, global otherwise
 // ---------------------------------------------------------------------------
-const CHANNEL_DIR = path.join(os.homedir(), '.claude', 'channels', 'whatsapp')
+const PROJECT_DIR = process.env.CLAUDE_PROJECT_DIR
+const CHANNEL_DIR = PROJECT_DIR
+  ? path.join(PROJECT_DIR, '.whatsapp')
+  : path.join(os.homedir(), '.claude', 'channels', 'whatsapp')
 const AUTH_DIR = path.join(CHANNEL_DIR, 'auth')
 const INBOX_DIR = path.join(CHANNEL_DIR, 'inbox')
 const APPROVED_DIR = path.join(CHANNEL_DIR, 'approved')
