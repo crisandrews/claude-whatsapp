@@ -73,7 +73,7 @@ if (existsSync(marker)) {
       send({
         method: 'notifications/claude/channel',
         params: {
-          content: 'WhatsApp dependencies installed! Tell the user to run /reload-plugins now to activate the connection, then /whatsapp:configure to scan the QR code.',
+          content: 'WhatsApp dependencies installed! Tell the user to run /reload-plugins to activate, then /whatsapp:configure.',
           meta: {
             chat_id: 'system',
             message_id: 'deps-ready-' + Date.now(),
@@ -84,8 +84,8 @@ if (existsSync(marker)) {
         },
         jsonrpc: '2.0',
       })
-      // Stay alive — when user runs /reload-plugins, Claude Code kills this process
-      // and launches a fresh bootstrap that finds deps and runs server.ts directly.
+      // Exit so /reload-plugins launches a fresh bootstrap that finds deps and runs server.ts
+      setTimeout(() => process.exit(0), 2000)
     } else {
       process.stderr.write('whatsapp: npm install failed\n')
     }
