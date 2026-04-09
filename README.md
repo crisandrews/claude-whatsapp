@@ -251,23 +251,12 @@ Then reopen Claude and install again.
 
 ## Troubleshooting
 
-**Voice messages transcribe in the wrong language**
-Set your language explicitly: `/whatsapp:configure audio es`. Without it, the model often defaults to English on short clips. Restart Claude after changing.
-
-**Server didn't start (first launch)**
-The first launch downloads dependencies (~60s). Run `/whatsapp:configure` — it waits automatically. If it still fails, close and reopen Claude with the channel flag.
-
-**QR code expired**
-Run `/whatsapp:configure` again — the server generates a fresh QR every ~20 seconds.
-
-**WhatsApp disconnected**
-Sessions can expire if you log out from your phone or WhatsApp revokes the link. Run `/whatsapp:configure reset` then `/whatsapp:configure` to scan a new QR.
-
-**Voice transcription is slow**
-The Whisper model runs on CPU. Short messages (< 30s) typically take 2-8 seconds. For faster results, ensure no heavy CPU tasks are running in parallel. Try `/whatsapp:configure audio model tiny` for speed, or `/whatsapp:configure audio quality fast`.
-
-**Reinstall fails or plugin behaves unexpectedly**
-Clear the cache: close Claude, run `rm -rf ~/.claude/plugins/cache/claude-whatsapp` in terminal, reopen Claude and install again.
+- **Voice messages transcribe in the wrong language** — Set your language explicitly: `/whatsapp:configure audio es`. Without it, the model often defaults to English on short clips.
+- **Server didn't start (first launch)** — The first launch downloads dependencies (~60s). Run `/whatsapp:configure` — it waits automatically. If it still fails, close and reopen Claude with the channel flag.
+- **QR code expired** — Run `/whatsapp:configure` again. The server generates a fresh QR every ~20 seconds.
+- **WhatsApp disconnected** — Sessions can expire if you log out from your phone. Run `/whatsapp:configure reset` then `/whatsapp:configure` to scan a new QR.
+- **Voice transcription is slow** — Whisper runs on CPU. Try `/whatsapp:configure audio model tiny` for speed, or `/whatsapp:configure audio quality fast`.
+- **Reinstall fails or plugin behaves unexpectedly** — Clear the cache: close Claude, run `rm -rf ~/.claude/plugins/cache/claude-whatsapp` in terminal, reopen and install again.
 
 ## Important
 
