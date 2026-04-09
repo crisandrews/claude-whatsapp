@@ -8,8 +8,6 @@
 - Hot-reload audio config: server detects config changes every 5s — no restart needed.
 - Per-project agent isolation: state stored in `.whatsapp/` per project folder. Each folder is an independent agent.
 - Reaction commands: 👍 = proceed, 👎 = cancel.
-- Autonomous mode docs: recommended launch with `--dangerously-skip-permissions --chrome`.
-- OpenClaw coexistence: documented switching between OpenClaw and this plugin on the same number.
 - WhatsApp-native formatting: enforced in MCP instructions (no markdown headers/tables/links).
 
 ### Fixes
