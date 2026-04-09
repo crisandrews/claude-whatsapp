@@ -87,20 +87,46 @@ for (const d of [CHANNEL_DIR, AUTH_DIR, INBOX_DIR, APPROVED_DIR]) {
 // Constants
 // ---------------------------------------------------------------------------
 const MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024 // 50 MB
+const LOGS_DIR = path.join(CHANNEL_DIR, 'logs')
+const CONV_LOGS_DIR = path.join(LOGS_DIR, 'conversations')
+const SYSTEM_LOG = path.join(LOGS_DIR, 'system.log')
+
+fs.mkdirSync(CONV_LOGS_DIR, { recursive: true, mode: 0o700 })
 
 // ---------------------------------------------------------------------------
-// Logger (silent for MCP stdio)
+// Logging
 // ---------------------------------------------------------------------------
 let logger: any = { info() {}, warn() {}, error() {}, debug() {}, trace() {}, child() { return this } }
+
+function syslog(msg: string) {
+  const ts = new Date().toISOString()
+  const line = `[${ts}] ${msg}\n`
+  try { fs.appendFileSync(SYSTEM_LOG, line) } catch {}
+  process.stderr.write(`whatsapp: ${msg}\n`)
+}
+
+function logConversation(direction: 'in' | 'out', user: string, text: string, meta?: Record<string, string>) {
+  const ts = new Date().toISOString()
+  const date = ts.slice(0, 10) // YYYY-MM-DD
+
+  // JSONL
+  const jsonLine = JSON.stringify({ ts, direction, user, text, ...meta }) + '\n'
+  try { fs.appendFileSync(path.join(CONV_LOGS_DIR, `${date}.jsonl`), jsonLine) } catch {}
+
+  // Markdown
+  const arrow = direction === 'in' ? '←' : '→'
+  const mdLine = `**${arrow} ${user}** (${ts.slice(11, 19)}): ${text}\n\n`
+  try { fs.appendFileSync(path.join(CONV_LOGS_DIR, `${date}.md`), mdLine) } catch {}
+}
 
 // ---------------------------------------------------------------------------
 // Global error handlers – prevent silent crashes
 // ---------------------------------------------------------------------------
 process.on('unhandledRejection', (err) => {
-  process.stderr.write(`whatsapp channel: unhandled rejection: ${err}\n`)
+  syslog(`unhandled rejection: ${err}`)
 })
 process.on('uncaughtException', (err) => {
-  process.stderr.write(`whatsapp channel: uncaught exception: ${err}\n`)
+  syslog(`uncaught exception: ${err}`)
 })
 
 // ---------------------------------------------------------------------------
@@ -220,7 +246,7 @@ async function initTranscriber() {
     process.stderr.write('whatsapp channel: audio transcription ready\n')
   } catch (err) {
     writeTranscriberStatus('error', String(err))
-    process.stderr.write(`whatsapp channel: audio transcription not available: ${err}\n`)
+    syslog(`audio transcription not available: ${err}`)
     transcriber = null
   }
 }
@@ -255,7 +281,7 @@ function loadAccess(): AccessState {
     if (fs.existsSync(ACCESS_FILE)) {
       const corrupt = `${ACCESS_FILE}.corrupt-${Date.now()}`
       fs.renameSync(ACCESS_FILE, corrupt)
-      process.stderr.write(`whatsapp channel: access.json is corrupt, moved to ${corrupt}\n`)
+      syslog(`access.json is corrupt, moved to ${corrupt}\n`)
     }
     return defaultAccess()
   }
@@ -411,6 +437,7 @@ async function connectWhatsApp() {
 
       if (shouldReconnect) {
         writeStatus('reconnecting')
+        syslog(`connection closed (status ${statusCode}), reconnecting...`)
         setTimeout(() => connectWhatsApp(), 5000)
       } else {
         writeStatus('logged_out')
@@ -422,6 +449,7 @@ async function connectWhatsApp() {
     if (connection === 'open') {
       try { fs.unlinkSync(QR_IMAGE_PATH) } catch {}
       writeStatus('connected')
+      syslog('WhatsApp connected successfully')
 
       try {
         mcp.notification({
@@ -477,6 +505,9 @@ async function handleInbound(msg: proto.IWebMessageInfo) {
   // Extract message content
   const { text, meta } = await extractMessage(msg)
 
+  // Log inbound message
+  logConversation('in', pushName, text, meta)
+
   // Send to Claude via MCP channel notification
   mcp.notification({
     method: 'notifications/claude/channel',
@@ -530,7 +561,7 @@ async function extractMessage(msg: proto.IWebMessageInfo): Promise<{ text: strin
       const filepath = path.join(INBOX_DIR, filename)
       fs.writeFileSync(filepath, buffer)
       meta.image_path = filepath
-    } catch (err) { process.stderr.write(`whatsapp channel: image download failed: ${err}\n`) }
+    } catch (err) { syslog(`image download failed: ${err}`) }
     return { text: caption ? `[Image] ${caption}` : '[Image received]', meta }
   }
 
@@ -546,7 +577,7 @@ async function extractMessage(msg: proto.IWebMessageInfo): Promise<{ text: strin
       const filepath = path.join(INBOX_DIR, cleanName)
       fs.writeFileSync(filepath, buffer)
       meta.attachment_path = filepath
-    } catch (err) { process.stderr.write(`whatsapp channel: media download failed: ${err}\n`) }
+    } catch (err) { syslog(`media download failed: ${err}`) }
     return { text: `[Document: ${cleanName}]`, meta }
   }
 
@@ -568,7 +599,7 @@ async function extractMessage(msg: proto.IWebMessageInfo): Promise<{ text: strin
       fs.writeFileSync(filepath, audioBuffer)
       meta.attachment_path = filepath
     } catch (err) {
-      process.stderr.write(`whatsapp channel: audio download failed: ${err}\n`)
+      syslog(`audio download failed: ${err}`)
       audioBuffer = null
     }
 
@@ -579,7 +610,7 @@ async function extractMessage(msg: proto.IWebMessageInfo): Promise<{ text: strin
         meta.transcribed = 'true'
         return { text, meta }
       } catch (err) {
-        process.stderr.write(`whatsapp channel: transcription failed: ${err}\n`)
+        syslog(`transcription failed: ${err}`)
       }
     }
 
@@ -599,7 +630,7 @@ async function extractMessage(msg: proto.IWebMessageInfo): Promise<{ text: strin
       const filepath = path.join(INBOX_DIR, filename)
       fs.writeFileSync(filepath, buffer)
       meta.attachment_path = filepath
-    } catch (err) { process.stderr.write(`whatsapp channel: media download failed: ${err}\n`) }
+    } catch (err) { syslog(`media download failed: ${err}`) }
     return { text: caption ? `[Video] ${caption}` : '[Video received]', meta }
   }
 
@@ -893,6 +924,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
           )
         }
 
+        logConversation('out', 'Claude', `[File: ${path.basename(absPath)}] ${text || ''}`, { chat_id })
         return { content: [{ type: 'text', text: `Sent file: ${path.basename(absPath)}` }] }
       }
 
@@ -914,6 +946,9 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
           { quoted: i === 0 ? (quoted as any) : undefined },
         )
       }
+
+      // Log outbound message
+      logConversation('out', 'Claude', text, { chat_id })
 
       return {
         content: [

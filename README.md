@@ -182,13 +182,22 @@ State is stored in `.whatsapp/` inside your project directory:
 
 ```
 ~/my-whatsapp-agent/.whatsapp/
-├── auth/           # WhatsApp session keys
-├── inbox/          # Downloaded media
-├── approved/       # Pairing signals
-├── access.json     # Access control
-├── config.json     # Plugin settings (audio, language)
-└── status.json     # Connection state
+├── auth/                          # WhatsApp session keys
+├── inbox/                         # Downloaded media
+├── approved/                      # Pairing signals
+├── logs/
+│   ├── conversations/
+│   │   ├── 2026-04-09.jsonl       # Messages (machine-readable)
+│   │   └── 2026-04-09.md          # Messages (human-readable)
+│   └── system.log                 # Server events (connections, errors)
+├── access.json                    # Access control
+├── config.json                    # Plugin settings (audio, language)
+└── status.json                    # Connection state
 ```
+
+**Conversation logs** are stored in two formats:
+- **JSONL** — one JSON object per line, ideal for programmatic access, RAG, or memory systems
+- **Markdown** — human-readable chat transcript
 
 Reset with `/whatsapp:configure reset`.
 
