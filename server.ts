@@ -365,7 +365,7 @@ async function connectWhatsApp() {
   sock = makeWASocket({
     auth: state,
     printQRInTerminal: false, // stdout is MCP transport, cannot print there
-    browser: Browsers.ubuntu('Claude WhatsApp'),
+    browser: ['Claude WhatsApp', 'Chrome', '126.0.0'] as any,
     logger,
   })
 
@@ -528,7 +528,7 @@ async function extractMessage(msg: proto.IWebMessageInfo): Promise<{ text: strin
       const filepath = path.join(INBOX_DIR, filename)
       fs.writeFileSync(filepath, buffer)
       meta.image_path = filepath
-    } catch { /* download failed, still deliver text */ }
+    } catch (err) { process.stderr.write(`whatsapp channel: image download failed: ${err}\n`) }
     return { text: caption ? `[Image] ${caption}` : '[Image received]', meta }
   }
 
@@ -544,7 +544,7 @@ async function extractMessage(msg: proto.IWebMessageInfo): Promise<{ text: strin
       const filepath = path.join(INBOX_DIR, cleanName)
       fs.writeFileSync(filepath, buffer)
       meta.attachment_path = filepath
-    } catch { /* download failed */ }
+    } catch (err) { process.stderr.write(`whatsapp channel: media download failed: ${err}\n`) }
     return { text: `[Document: ${cleanName}]`, meta }
   }
 
@@ -554,21 +554,31 @@ async function extractMessage(msg: proto.IWebMessageInfo): Promise<{ text: strin
     meta.attachment_mimetype = m.audioMessage.mimetype || 'audio/ogg'
     let audioBuffer: Buffer | null = null
     try {
-      audioBuffer = await downloadMediaMessage(msg, 'buffer', {}, { logger, reuploadRequest: sock!.updateMediaMessage }) as Buffer
+      // Use 'stream' mode — Baileys v7 has a bug where 'buffer' returns 0 bytes for audio
+      const stream = await downloadMediaMessage(msg, 'stream', {}, { logger, reuploadRequest: sock!.updateMediaMessage })
+      const chunks: Buffer[] = []
+      for await (const chunk of stream as AsyncIterable<Buffer>) { chunks.push(chunk) }
+      audioBuffer = Buffer.concat(chunks)
+      if (!audioBuffer || audioBuffer.length === 0) throw new Error('Empty audio buffer')
       if (audioBuffer.length > MAX_ATTACHMENT_BYTES) throw new Error('File too large')
       const filename = `audio_${Date.now()}.ogg`
       const filepath = path.join(INBOX_DIR, filename)
       fs.writeFileSync(filepath, audioBuffer)
       meta.attachment_path = filepath
-    } catch { /* download failed */ }
+    } catch (err) {
+      process.stderr.write(`whatsapp channel: audio download failed: ${err}\n`)
+      audioBuffer = null
+    }
 
-    // Transcribe if enabled
-    if (transcriber && audioBuffer) {
+    // Transcribe if enabled and buffer has data
+    if (transcriber && audioBuffer && audioBuffer.length > 0) {
       try {
         const text = await transcriber.transcribe(audioBuffer)
         meta.transcribed = 'true'
         return { text, meta }
-      } catch { /* transcription failed, fall back to default */ }
+      } catch (err) {
+        process.stderr.write(`whatsapp channel: transcription failed: ${err}\n`)
+      }
     }
 
     return { text: `[${meta.attachment_kind === 'voice' ? 'Voice message' : 'Audio'} received]`, meta }
@@ -587,7 +597,7 @@ async function extractMessage(msg: proto.IWebMessageInfo): Promise<{ text: strin
       const filepath = path.join(INBOX_DIR, filename)
       fs.writeFileSync(filepath, buffer)
       meta.attachment_path = filepath
-    } catch { /* download failed */ }
+    } catch (err) { process.stderr.write(`whatsapp channel: media download failed: ${err}\n`) }
     return { text: caption ? `[Video] ${caption}` : '[Video received]', meta }
   }
 
@@ -987,6 +997,8 @@ async function main() {
       if (await loadDeps()) {
         clearInterval(depCheck)
         logger = pino({ level: 'silent' })
+        watchApproved()
+        watchConfig()
         initTranscriber().catch(() => {})
         await connectWhatsApp()
       }
