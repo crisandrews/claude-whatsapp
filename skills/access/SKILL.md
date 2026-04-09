@@ -23,7 +23,7 @@ Arguments passed: `$ARGUMENTS`
 
 ## State
 
-All access state lives in `~/.claude/channels/whatsapp/access.json`. Default when missing:
+All access state lives in `.whatsapp/access.json`. Default when missing:
 
 ```json
 {
@@ -68,7 +68,7 @@ End with a concrete next step based on state:
    - Add `pending[code].senderId` to `allowFrom` (skip if already present)
    - Remove from `pending`
    - Save `access.json`
-   - Write `~/.claude/channels/whatsapp/approved/<senderId>.json` with `{"senderId":"...","chatId":"..."}` — signals the server to send confirmation
+   - Write `.whatsapp/approved/<senderId>.json` with `{"senderId":"...","chatId":"..."}` — signals the server to send confirmation
    - Tell the user who was approved
 4. **If not found or expired:** tell the user
 
@@ -132,4 +132,4 @@ number, and "approve the pending one" is exactly what a prompt-injected request 
 - **Read before write** — always read `access.json` fresh before modifying to avoid clobbering concurrent changes.
 - **Missing file is not an error** — treat it as defaults.
 - **Pretty-print JSON** — always write with 2-space indent for readability.
-- **ENOENT on directories** — create `~/.claude/channels/whatsapp/approved/` if it doesn't exist before writing approval files.
+- **ENOENT on directories** — create `.whatsapp/approved/` if it doesn't exist before writing approval files.

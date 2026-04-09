@@ -24,21 +24,21 @@ Arguments passed: `$ARGUMENTS`
 
 This is the main setup flow:
 
-1. **Check if the server is ready.** Run: `ls ~/.claude/channels/whatsapp/status.json 2>/dev/null`
+1. **Check if the server is ready.** Run: `ls .whatsapp/status.json 2>/dev/null`
 
 2. **If the directory or status.json don't exist yet**, the server is still starting up (first launch installs dependencies which takes ~30 seconds). Tell the user:
    "Server is starting up and installing dependencies... this only happens the first time."
    Then poll in a loop:
-   - `sleep 5` then check again: `ls ~/.claude/channels/whatsapp/status.json 2>/dev/null`
+   - `sleep 5` then check again: `ls .whatsapp/status.json 2>/dev/null`
    - Repeat up to 6 times (30 seconds total)
    - Between each check, tell the user "Still waiting..." 
    - If after 6 attempts it still doesn't exist, tell the user: "Server didn't start. Try closing Claude and reopening with `claude --dangerously-load-development-channels plugin:whatsapp@claude-whatsapp`"
 
-3. **Once status.json exists**, read it with: `cat ~/.claude/channels/whatsapp/status.json`
+3. **Once status.json exists**, read it with: `cat .whatsapp/status.json`
 
 4. **Based on status:**
-   - `connected`: Tell the user "WhatsApp is connected and ready! People can message your number and Claude will respond." Then read and show `~/.claude/channels/whatsapp/access.json` if it exists.
-   - `qr_ready`: Check that `~/.claude/channels/whatsapp/qr.png` exists, then open it: `open ~/.claude/channels/whatsapp/qr.png` and tell the user:
+   - `connected`: Tell the user "WhatsApp is connected and ready! People can message your number and Claude will respond." Then read and show `.whatsapp/access.json` if it exists.
+   - `qr_ready`: Check that `.whatsapp/qr.png` exists, then open it: `open .whatsapp/qr.png` and tell the user:
      ```
      QR code opened! Scan it now:
      1. Open WhatsApp on your phone
@@ -54,15 +54,15 @@ This is the main setup flow:
 
 ### `reset` — clear session
 
-1. `rm -rf ~/.claude/channels/whatsapp/auth && mkdir -p ~/.claude/channels/whatsapp/auth`
-2. `rm -f ~/.claude/channels/whatsapp/status.json`
-3. `rm -f ~/.claude/channels/whatsapp/qr.png`
+1. `rm -rf .whatsapp/auth && mkdir -p .whatsapp/auth`
+2. `rm -f .whatsapp/status.json`
+3. `rm -f .whatsapp/qr.png`
 4. Tell user: "Session cleared. Run `/whatsapp:configure` to get a new QR code."
 
 ### `status` — check connection only
 
-1. Read `~/.claude/channels/whatsapp/status.json` and report the state.
-2. Read `~/.claude/channels/whatsapp/access.json` if it exists — show DM policy and allowed users count.
+1. Read `.whatsapp/status.json` and report the state.
+2. Read `.whatsapp/access.json` if it exists — show DM policy and allowed users count.
 
 ## Important
 
