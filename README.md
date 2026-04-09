@@ -229,11 +229,17 @@ Reset with `/whatsapp:configure reset`.
 
 **Update to the latest version:**
 
-```
-/plugin update whatsapp@claude-whatsapp
-```
+1. Inside Claude Code:
+   ```
+   /plugin update whatsapp@claude-whatsapp
+   ```
+2. Close Claude (Ctrl+C or `/exit`)
+3. Reopen with the same launch command:
+   ```sh
+   claude --dangerously-load-development-channels plugin:whatsapp@claude-whatsapp --dangerously-skip-permissions
+   ```
 
-Then close Claude and reopen with the same launch command. Your WhatsApp session is preserved — no need to scan the QR code again.
+Your WhatsApp session is preserved — no QR scan needed. A restart is required because the MCP server loads once at startup.
 
 **Uninstall:**
 
