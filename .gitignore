@@ -2,3 +2,10 @@ node_modules/
 .claude/
 .whatsapp/
 *.log
+.DS_Store
+.env
+.env.local
+.env.*.local
+*.swp
+*.swo
+*.bak
