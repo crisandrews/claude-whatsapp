@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.3.7
+
+### Fixes
+
+- `/whatsapp:access pair <code>` sometimes claimed a valid pending code wasn't in the list when a second pairing arrived after the initial status notification: the skill model relied on cached context from earlier messages instead of re-reading `access.json`. Skill now requires a fresh Read on every invocation, ignoring any prior-context view of pending/allowlist/policy.
+
 ## v1.3.6
 
 ### Fixes

@@ -21,6 +21,14 @@ Arguments passed: `$ARGUMENTS`
 
 ---
 
+## MANDATORY first step — read fresh state
+
+**Every invocation, before doing anything else, call the Read tool on `$STATE_DIR/access.json`.** Do not rely on the pending list, allowlist, or policy from any prior message in this conversation (status notifications, earlier `/whatsapp:access` runs, summaries). The server updates this file in the background — your context is stale by definition. If you skip the Read and answer from memory, you will tell the user a pending code "isn't there" when it actually is.
+
+The server writes `access.json` atomically (tmp + rename), so a read always sees a complete, current version.
+
+---
+
 ## Finding the state directory
 
 The server stores state in one of two places. Check both and use whichever exists:
