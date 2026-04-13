@@ -14,12 +14,18 @@ import os from 'os'
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const marker = join(__dirname, 'node_modules', '@modelcontextprotocol')
 
+// Capture the cwd Claude Code launched us from — this is the user's project dir.
+// We forward it to server.ts so detectProjectDir() can pick the right entry when
+// the plugin is installed in more than one project.
+const launchCwd = process.cwd()
+
 if (existsSync(marker)) {
   // Deps exist — launch real server, pass through stdin/stdout
   const tsx = join(__dirname, 'node_modules', '.bin', 'tsx')
   const child = spawn(tsx, [join(__dirname, 'server.ts')], {
     cwd: __dirname,
     stdio: 'inherit',
+    env: { ...process.env, CLAUDE_WHATSAPP_LAUNCH_CWD: launchCwd },
   })
   child.on('exit', (code) => process.exit(code ?? 0))
   process.on('SIGTERM', () => child.kill('SIGTERM'))

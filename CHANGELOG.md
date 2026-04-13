@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.3.6
+
+### Fixes
+
+- State written to wrong project when the plugin is installed in more than one local project: `detectProjectDir()` returned the first `scope: local` entry in `installed_plugins.json` without checking the launch cwd, so QR/auth/inbox collided under a single `.whatsapp/`. Now matches the entry whose `projectPath` equals the cwd Claude Code launched from (forwarded by `bootstrap.mjs`), falling back to the first local entry to preserve behavior for single-install users.
+
 ## v1.3.0
 
 ### Changes

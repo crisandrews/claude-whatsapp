@@ -61,6 +61,14 @@ function detectProjectDir(): string | undefined {
     const data = JSON.parse(fs.readFileSync(pluginsFile, 'utf8'))
     const entries = data.plugins?.['whatsapp@claude-whatsapp']
     if (!entries) return undefined
+    // bootstrap.mjs forwards the launch cwd; fall back to our own cwd if absent.
+    const launchCwd = process.env.CLAUDE_WHATSAPP_LAUNCH_CWD || process.cwd()
+    for (const entry of entries) {
+      if (entry.scope === 'local' && entry.projectPath === launchCwd) {
+        return entry.projectPath
+      }
+    }
+    // Fallback: first local entry (preserves behavior for single-install users)
     for (const entry of entries) {
       if (entry.scope === 'local' && entry.projectPath) {
         return entry.projectPath
