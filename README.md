@@ -1,10 +1,42 @@
-# WhatsApp for Claude Code
+<h1 align="center">💬 WhatsApp for Claude Code</h1>
 
-> **Release 1.3** — Bundled audio deps, simplified voice setup.
+<p align="center">
+  <strong>Your WhatsApp number, powered by Claude Code.</strong>
+</p>
+
+<p align="center">
+  <a href="https://github.com/crisandrews/claude-whatsapp/releases"><img src="https://img.shields.io/github/v/release/crisandrews/claude-whatsapp?include_prereleases&style=for-the-badge&color=25D366" alt="Release"></a>
+  <a href="https://github.com/crisandrews/claude-whatsapp/stargazers"><img src="https://img.shields.io/github/stars/crisandrews/claude-whatsapp?style=for-the-badge&color=blue" alt="Stars"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge" alt="MIT License"></a>
+  <img src="https://img.shields.io/badge/node-%E2%89%A5%2018-blue?style=for-the-badge&logo=node.js&logoColor=white" alt="Node ≥ 18">
+  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-blue?style=for-the-badge" alt="Platform">
+</p>
+
+<p align="center">
+  <a href="#quick-setup">Quick Setup</a> ·
+  <a href="#features">Features</a> ·
+  <a href="#access-control">Access</a> ·
+  <a href="#going-further">Going further</a> ·
+  <a href="#troubleshooting">Troubleshooting</a> ·
+  <a href="https://github.com/crisandrews/claude-whatsapp/issues">Issues</a>
+</p>
+
+---
 
 With Anthropic's recent policy changes, many users lost access to their AI agents through messaging platforms. While official channel plugins exist for [Telegram](https://github.com/anthropics/claude-plugins-official/tree/main/external_plugins/telegram) and Instagram, **WhatsApp — the world's most used messaging app — had no solution.**
 
-This plugin fills that gap. It connects your WhatsApp number directly to Claude Code, turning it into a fully functional AI agent that responds through WhatsApp. This is version 1.0 with plans to evolve into a more complete and agentic platform for WhatsApp.
+This plugin fills that gap. It connects your WhatsApp number directly to Claude Code, turning it into a fully functional AI agent that responds through WhatsApp.
+
+## Highlights
+
+- **[Native WhatsApp channel](#quick-setup)** — scan a QR, pair your contacts, start chatting with Claude.
+- **[Access control](#access-control)** — pairing codes, allowlist, group gating. Nobody talks to your agent without permission.
+- **[Voice transcription](#voice-transcription-optional)** — local Whisper, no API keys, 12+ languages.
+- **[Media pipeline](#media)** — inbound images, audio, video, and documents auto-downloaded for Claude to read.
+- **[Reactions as commands](#reactions)** — 👍 / 👎 on any message become `proceed` / `cancel` signals.
+- **[Autonomous mode + web browsing](#autonomous-mode--web-browsing)** — combine with `--chrome` for a fully agentic WhatsApp assistant.
+- **[Always-on](#always-on-run-as-a-background-service)** — launchd, systemd, or Task Scheduler recipes included.
+- **[Multiple agents](#multiple-agents)** — run separate numbers from separate folders, each isolated.
 
 ## Prerequisites
 
