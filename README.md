@@ -27,7 +27,7 @@ With Anthropic's recent policy changes, many users lost access to their AI agent
 
 This plugin fills that gap. It connects your WhatsApp number directly to Claude Code, turning it into a fully functional AI agent that responds through WhatsApp.
 
-## Highlights
+## [Highlights](#highlights)
 
 - **[Native WhatsApp channel](#quick-setup)** — scan a QR, pair your contacts, start chatting with Claude.
 - **[Access control](#access-control)** — pairing codes, allowlist, group gating. Nobody talks to your agent without permission.
@@ -38,11 +38,11 @@ This plugin fills that gap. It connects your WhatsApp number directly to Claude 
 - **[Always-on](#always-on-run-as-a-background-service)** — launchd, systemd, or Task Scheduler recipes included.
 - **[Multiple agents](#multiple-agents)** — run separate numbers from separate folders, each isolated.
 
-## Prerequisites
+## [Prerequisites](#prerequisites)
 
 - [Node.js](https://nodejs.org/) v18+
 
-## Quick Setup
+## [Quick Setup](#quick-setup)
 
 **1. Create a folder for your WhatsApp agent.**
 
@@ -105,7 +105,7 @@ Message your WhatsApp number from another phone. It replies with a 6-character c
 
 Now only your approved contacts can reach Claude.
 
-## Access control
+## [Access control](#access-control)
 
 | Command | Description |
 | --- | --- |
@@ -120,9 +120,9 @@ Now only your approved contacts can reach Claude.
 
 Default policy is `pairing`. IDs are WhatsApp JIDs — format depends on your Baileys version (e.g. `56912345678@s.whatsapp.net` or `199999598137448@lid`). Check `/whatsapp:access` to see the exact IDs.
 
-## Features
+## [Features](#features)
 
-### Tools
+### [Tools](#tools)
 
 | Tool | Purpose |
 | --- | --- |
@@ -130,7 +130,7 @@ Default policy is `pairing`. IDs are WhatsApp JIDs — format depends on your Ba
 | `react` | Emoji reaction on a message. |
 | `download_attachment` | Access downloaded media from the inbox. |
 
-### Reactions
+### [Reactions](#reactions)
 
 Emoji reactions on messages are forwarded to Claude as commands:
 
@@ -141,11 +141,11 @@ Emoji reactions on messages are forwarded to Claude as commands:
 
 Long-press any message in the chat and tap a reaction. Claude will interpret it in context.
 
-### Media
+### [Media](#media)
 
 Inbound photos, voice messages, videos, and documents are automatically downloaded to `.whatsapp/inbox/` inside your project directory (max 50 MB per file). The file path is included in the notification so Claude can read or reference it.
 
-### Voice transcription (optional)
+### [Voice transcription (optional)](#voice-transcription-optional)
 
 By default, voice messages arrive as `[Voice message received]` with the audio file saved. To enable automatic local transcription:
 
@@ -198,9 +198,9 @@ Without a language set, Whisper auto-detects — but setting it explicitly is mo
 
 Disable with `/whatsapp:configure audio off`.
 
-## Going further
+## [Going further](#going-further)
 
-### Autonomous mode + web browsing
+### [Autonomous mode + web browsing](#autonomous-mode--web-browsing)
 
 For a fully autonomous agent that doesn't ask permission for every action and can browse the web:
 
@@ -213,15 +213,15 @@ claude --dangerously-load-development-channels plugin:whatsapp@claude-whatsapp -
 | `--dangerously-skip-permissions` | Agent executes tools without asking for confirmation |
 | `--chrome` | Agent can browse the web and interact with pages |
 
-### Computer use
+### [Computer use](#computer-use)
 
 Once the agent is running, type `/mcp` inside Claude Code and enable **computer use**. This lets the agent control your computer (click, type, take screenshots) — useful for tasks that go beyond chat.
 
-### Using a WhatsApp number that's already on OpenClaw
+### [Using a WhatsApp number that's already on OpenClaw](#using-a-whatsapp-number-thats-already-on-openclaw)
 
 If you have a WhatsApp number running an agent on [OpenClaw](https://github.com/openclaw/openclaw), you can try this plugin without losing anything. Just close OpenClaw (or stop that agent), scan the QR code here, and the number will work through Claude Code natively. When you're done, close Claude Code and reopen OpenClaw — your OpenClaw agent will reconnect and respond as before. Each platform re-links the WhatsApp session on startup, so they don't conflict — just don't run both at the same time on the same number.
 
-### Always-on (run as a background service)
+### [Always-on (run as a background service)](#always-on-run-as-a-background-service)
 
 To keep your WhatsApp agent running permanently, wrap Claude Code with a process manager:
 
@@ -291,7 +291,7 @@ claude --dangerously-load-development-channels plugin:whatsapp@claude-whatsapp -
 ```
 Set the "Start in" directory to your agent folder.
 
-### Multiple agents
+### [Multiple agents](#multiple-agents)
 
 Each agent folder has its own WhatsApp session and access control:
 
@@ -302,7 +302,7 @@ Each agent folder has its own WhatsApp session and access control:
 
 Install the plugin in each folder with local scope and scan a separate QR code for each.
 
-## Session & data
+## [Session & data](#session--data)
 
 State is stored in `.whatsapp/` inside your project directory:
 
@@ -327,7 +327,7 @@ State is stored in `.whatsapp/` inside your project directory:
 
 Reset with `/whatsapp:configure reset`.
 
-## Updating, uninstalling, and cache
+## [Updating, uninstalling, and cache](#updating-uninstalling-and-cache)
 
 **Update to the latest version:**
 
@@ -361,7 +361,7 @@ rm -rf ~/.claude/plugins/cache/claude-whatsapp
 
 Then reopen Claude and install again.
 
-## Troubleshooting
+## [Troubleshooting](#troubleshooting)
 
 - **Voice messages transcribe in the wrong language** — Set your language explicitly: `/whatsapp:configure audio es`. Without it, the model often defaults to English on short clips.
 - **Server didn't start (first launch)** — The first launch downloads dependencies (~60s). Run `/whatsapp:configure` — it waits automatically. If it still fails, close and reopen Claude with the channel flag.
@@ -370,12 +370,12 @@ Then reopen Claude and install again.
 - **Voice transcription is slow** — Whisper runs on CPU. Try `/whatsapp:configure audio model tiny` for speed, or `/whatsapp:configure audio quality fast`.
 - **Reinstall fails or plugin behaves unexpectedly** — Clear the cache: close Claude, run `rm -rf ~/.claude/plugins/cache/claude-whatsapp` in terminal, reopen and install again.
 
-## Important
+## [Important](#important)
 
 - **Unofficial API** — Baileys is not endorsed by WhatsApp. Use responsibly — no spam, no bulk messaging.
 - **One linked device slot** — Unlink anytime from WhatsApp > Settings > Linked Devices.
 - **No message history** — Only sees messages as they arrive. Cannot fetch older messages.
 
-## Disclaimer
+## [Disclaimer](#disclaimer)
 
 This project is not affiliated with, endorsed by, or associated with WhatsApp, Meta, or Anthropic. WhatsApp is a trademark of Meta Platforms, Inc. Claude is a trademark of Anthropic, PBC. This plugin uses the unofficial Baileys library for WhatsApp Web connectivity.
