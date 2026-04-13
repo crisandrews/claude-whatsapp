@@ -12,6 +12,7 @@ allowed-tools:
   - Bash(npm install *)
   - Read
   - Write
+  - AskUserQuestion
 ---
 
 # /whatsapp:configure — WhatsApp Channel Setup
@@ -67,34 +68,39 @@ Find `STATE_DIR` as above, then:
 
 Enables local speech-to-text. The Whisper model (~77MB) downloads on first voice message and is cached permanently.
 
-1. Find `STATE_DIR` as described above.
-2. Clear any stale transcriber status: `rm -f $STATE_DIR/transcriber-status.json`
-3. Write `{"audioTranscription": true}` to `$STATE_DIR/config.json`
-4. Tell the user: "Audio transcription enabled! The Whisper model (~77MB) will download on the first voice message and be cached for future use."
+**If the user provided only `audio` with no language**, call `AskUserQuestion` to pick one — do NOT silently default to auto-detect. Use these options (single-select):
+- "Spanish (Recommended)" — description: "Transcribe voice notes as Spanish (`es`)"
+- "English" — description: "Transcribe voice notes as English (`en`)"
+- "Portuguese" — description: "Transcribe voice notes as Portuguese (`pt`)"
+- "Auto-detect" — description: "Let Whisper guess the language per message (slower, less accurate)"
+
+Users can always type "Other" for any ISO code (`fr`, `de`, `it`, `ja`, `zh`, ...).
+
+Then apply the `audio <language>` flow below with the chosen code.
 
 ### `audio <language>` — set transcription language
 
-If the user specifies a language code (e.g. `audio es`, `audio en`, `audio pt`), find `STATE_DIR`, read `$STATE_DIR/config.json`, set `audioTranscription: true` and `audioLanguage` to the code, then write it back. Also clear stale status: `rm -f $STATE_DIR/transcriber-status.json`. Tell the user: "Language set to [language]. Voice messages will be transcribed automatically."
+If the user specifies a language code directly (e.g. `audio es`, `audio en`, `audio pt`), skip the question above and apply it straight: find `STATE_DIR`, read `$STATE_DIR/config.json`, set `audioTranscription: true` and `audioLanguage` to the code (or `null` for auto-detect), write it back, and clear stale status: `rm -f $STATE_DIR/transcriber-status.json`. Tell the user: "Language set to [language]. Voice messages will be transcribed automatically."
 
 Common codes: `es` (Spanish), `en` (English), `pt` (Portuguese), `fr` (French), `de` (German), `it` (Italian), `ja` (Japanese), `zh` (Chinese).
 
-If just `audio` with no language, set `audioLanguage` to `null` (auto-detect).
+### `audio model [tiny|base|small]` — change Whisper model size
 
-### `audio model <tiny|base|small>` — change Whisper model size
+**If no size was provided**, call `AskUserQuestion` with these options (single-select):
+- "Base (Recommended)" — description: "~77MB — good balance of speed and accuracy. Default."
+- "Tiny" — description: "~39MB — fastest, lower accuracy. Good for short messages."
+- "Small" — description: "~250MB — best accuracy, slower. Download takes longer."
 
-Read `$STATE_DIR/config.json`, set `audioModel` to the value, write it back. Tell the user:
-- `tiny` (~39MB) — fastest, lower accuracy
-- `base` (~77MB, default) — good balance
-- `small` (~250MB) — best accuracy, slower
+Then apply the choice: read `$STATE_DIR/config.json`, set `audioModel` to the value, write it back. Tell the user which size was set and that the new model downloads on next voice message (requires `/reload-plugins`).
 
-The new model downloads on next voice message. Requires restart or `/reload-plugins`.
+### `audio quality [fast|balanced|best]` — set transcription quality
 
-### `audio quality <fast|balanced|best>` — set transcription quality
+**If no level was provided**, call `AskUserQuestion` with these options (single-select):
+- "Balanced (Recommended)" — description: "Quantized model, standard decoding. Default."
+- "Fast" — description: "Quantized model, no beam search. Lowest latency."
+- "Best" — description: "Full precision (fp32), beam search (5 beams). Slowest but most accurate."
 
-Read `$STATE_DIR/config.json`, set `audioQuality` to the value, write it back. Tell the user:
-- `fast` — quantized model, no beam search
-- `balanced` (default) — quantized model, standard decoding
-- `best` — full precision (fp32), beam search (5 beams). Slower but most accurate.
+Then apply the choice: read `$STATE_DIR/config.json`, set `audioQuality` to the value, write it back.
 
 ### `audio off` — disable voice transcription
 

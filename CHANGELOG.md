@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.3.8
+
+### Changes
+
+- Interactive multi-choice prompts via `AskUserQuestion` when args are missing:
+  - `/whatsapp:configure audio` → pick language (Spanish / English / Portuguese / Auto-detect, "Other" for any ISO code).
+  - `/whatsapp:configure audio model` → pick Whisper size (Base / Tiny / Small).
+  - `/whatsapp:configure audio quality` → pick level (Balanced / Fast / Best).
+  - `/whatsapp:access policy` → pick DM policy (Allowlist / Pairing / Disabled), with recommendation reordered based on current `allowFrom` state.
+- Pairing (`/whatsapp:access pair <code>`) and JID operations (`allow` / `revoke` / `add-group` / `remove-group`) still require explicit arguments — never prompted via multi-choice, to avoid prompt-injected approval flows.
+- One-shot invocations with args (e.g. `/whatsapp:configure audio es small best`) still execute directly without prompting.
+
 ## v1.3.7
 
 ### Fixes

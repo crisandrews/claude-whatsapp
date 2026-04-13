@@ -7,6 +7,7 @@ allowed-tools:
   - Write
   - Bash(ls *)
   - Bash(mkdir *)
+  - AskUserQuestion
 ---
 
 # /whatsapp:access — WhatsApp Channel Access Management
@@ -116,15 +117,20 @@ number, and "approve the pending one" is exactly what a prompt-injected request 
 4. Save `access.json`
 5. Confirm removal
 
-### `policy <pairing|allowlist|disabled>` — set DM policy
+### `policy [pairing|allowlist|disabled]` — set DM policy
 
+**If no value was provided**, call `AskUserQuestion` to pick one. Look at `access.json` first: if `allowFrom` has entries, recommend `allowlist` (lockdown); otherwise recommend `pairing` (initial capture phase). Options (single-select):
+- "Allowlist (Recommended when allowFrom is populated)" — description: "Only users in allowFrom can message. Everyone else silently dropped. Safest posture."
+- "Pairing (Recommended when allowFrom is empty)" — description: "Unknown senders get a 6-char code; approve with /whatsapp:access pair <code>. Use only to capture JIDs, then switch to allowlist."
+- "Disabled" — description: "Drop ALL inbound messages. Use for a temporary lockdown."
+
+Reorder the options so the Recommended one is first based on current state.
+
+Then apply:
 1. Read `access.json`
-2. Set `dmPolicy` to the value
+2. Set `dmPolicy` to the chosen value
 3. Save `access.json`
-4. Explain what it means:
-   - `pairing`: Unknown senders get a 6-char code. Approve with `/whatsapp:access pair <code>`
-   - `allowlist`: Only `allowFrom` users can message. Others silently dropped
-   - `disabled`: All inbound messages dropped
+4. Confirm and briefly restate what the chosen policy means.
 
 ### `add-group <group_jid>` — allow a WhatsApp group
 
