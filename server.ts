@@ -455,6 +455,13 @@ let firstConnectAnnounced = false
 const QR_IMAGE_PATH = path.join(CHANNEL_DIR, 'qr.png')
 const STATUS_FILE = path.join(CHANNEL_DIR, 'status.json')
 
+// Reconnect backoff state — see connection.update handler below.
+let consecutiveFailures = 0
+let lastConnectedAt = 0
+const RECONNECT_BASE_DELAY_MS = 2_000        // first retry ~2s
+const RECONNECT_MAX_DELAY_MS = 5 * 60_000    // cap at 5 min
+const RECONNECT_STABLE_THRESHOLD_MS = 30_000 // counted as "real" if open this long
+
 function writeStatus(status: string, details?: Record<string, any>) {
   fs.writeFileSync(STATUS_FILE, JSON.stringify({ status, ...details, ts: Date.now() }))
 }
@@ -530,9 +537,24 @@ async function connectWhatsApp() {
       const shouldReconnect = statusCode !== DisconnectReason.loggedOut
 
       if (shouldReconnect) {
-        writeStatus('reconnecting')
-        syslog(`connection closed (status ${statusCode}), reconnecting...`)
-        setTimeout(() => connectWhatsApp(), 5000)
+        // Exponential backoff with jitter. The previous fixed 5s retry made
+        // any colliding-instance fight (or genuine WhatsApp-side blip) loop
+        // forever at exactly the same cadence — observed >1500 cycles per
+        // hour, with risk of WhatsApp temp-banning the number for the
+        // re-handshake rate. Doubling the delay each consecutive failure,
+        // capped at 5 min, plus ±30% jitter desynchronizes competing
+        // instances so one eventually wins and stays connected.
+        // If the prior connection lasted long enough to count as 'real',
+        // treat this close as the first failure of a fresh streak.
+        const wasStable = lastConnectedAt > 0 && (Date.now() - lastConnectedAt) >= RECONNECT_STABLE_THRESHOLD_MS
+        if (wasStable) consecutiveFailures = 0
+        consecutiveFailures++
+        const exp = RECONNECT_BASE_DELAY_MS * Math.pow(2, Math.min(consecutiveFailures - 1, 8))
+        const jitter = (Math.random() - 0.5) * exp * 0.6 // ±30%
+        const delay = Math.min(RECONNECT_MAX_DELAY_MS, Math.max(RECONNECT_BASE_DELAY_MS, exp + jitter))
+        writeStatus('reconnecting', { attempt: consecutiveFailures, nextDelayMs: Math.round(delay) })
+        syslog(`connection closed (status ${statusCode}), retry #${consecutiveFailures} in ${Math.round(delay / 1000)}s`)
+        setTimeout(() => connectWhatsApp(), delay)
       } else {
         writeStatus('logged_out')
         fs.rmSync(AUTH_DIR, { recursive: true, force: true })
@@ -546,6 +568,7 @@ async function connectWhatsApp() {
       try { fs.unlinkSync(QR_IMAGE_PATH) } catch {}
       writeStatus('connected')
       syslog('WhatsApp connected successfully')
+      lastConnectedAt = Date.now()
 
       // Only push the "connected" channel notification on the FIRST successful
       // connection of this server's lifetime. Reconnects (network blips, status
