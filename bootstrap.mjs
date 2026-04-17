@@ -30,6 +30,20 @@ if (existsSync(marker)) {
   child.on('exit', (code) => process.exit(code ?? 0))
   process.on('SIGTERM', () => child.kill('SIGTERM'))
   process.on('SIGINT', () => child.kill('SIGINT'))
+
+  // Parent-death watchdog. With stdio: 'inherit' we share the parent's stdin
+  // FD, but no one in this branch reads it, so 'end'/'close' never emit.
+  // PPID change is the bulletproof signal that Claude Code exited and we got
+  // reparented — without this, an orphaned bootstrap+server pair lingers
+  // forever, fighting any new instance for the WhatsApp auth.
+  const ORIGINAL_PPID = process.ppid
+  setInterval(() => {
+    if (process.ppid !== ORIGINAL_PPID) {
+      process.stderr.write(`whatsapp bootstrap: parent exited (ppid ${ORIGINAL_PPID} → ${process.ppid}), terminating child\n`)
+      child.kill('SIGTERM')
+      setTimeout(() => process.exit(0), 2000).unref()
+    }
+  }, 5000).unref()
 } else {
   // First launch — handle MCP protocol while installing deps in background
   const rl = createInterface({ input: process.stdin })

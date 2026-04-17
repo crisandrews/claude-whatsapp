@@ -1037,7 +1037,10 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
 // ---------------------------------------------------------------------------
 // Graceful shutdown
 // ---------------------------------------------------------------------------
+let shuttingDown = false
 function shutdown() {
+  if (shuttingDown) return
+  shuttingDown = true
   sock?.end(undefined)
   setTimeout(() => process.exit(0), 2000)
 }
@@ -1046,6 +1049,18 @@ process.stdin.on('end', shutdown)
 process.stdin.on('close', shutdown)
 process.on('SIGTERM', shutdown)
 process.on('SIGINT', shutdown)
+
+// Parent-death watchdog: stdin handlers above don't fire reliably when the MCP
+// SDK consumes process.stdin in paused mode. PPID changes only when the parent
+// exits and we get reparented (to launchd/init on Unix), so it's a bulletproof
+// signal of "Claude Code died, time to clean up".
+const ORIGINAL_PPID = process.ppid
+setInterval(() => {
+  if (process.ppid !== ORIGINAL_PPID) {
+    syslog(`parent process exited (ppid ${ORIGINAL_PPID} → ${process.ppid}), shutting down`)
+    shutdown()
+  }
+}, 5000).unref()
 
 // ---------------------------------------------------------------------------
 // Start
