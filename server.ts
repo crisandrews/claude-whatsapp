@@ -451,6 +451,7 @@ Important:
 // WhatsApp connection
 // ---------------------------------------------------------------------------
 let sock: WASocket | null = null
+let firstConnectAnnounced = false
 const QR_IMAGE_PATH = path.join(CHANNEL_DIR, 'qr.png')
 const STATUS_FILE = path.join(CHANNEL_DIR, 'status.json')
 
@@ -536,6 +537,8 @@ async function connectWhatsApp() {
         writeStatus('logged_out')
         fs.rmSync(AUTH_DIR, { recursive: true, force: true })
         fs.mkdirSync(AUTH_DIR, { recursive: true })
+        // Re-pairing → next 'open' is a genuinely new session, re-announce.
+        firstConnectAnnounced = false
       }
     }
 
@@ -544,21 +547,28 @@ async function connectWhatsApp() {
       writeStatus('connected')
       syslog('WhatsApp connected successfully')
 
-      try {
-        mcp.notification({
-          method: 'notifications/claude/channel',
-          params: {
-            content: 'WhatsApp connected successfully! Ready to receive and send messages.\n\nTip: Voice messages are not transcribed by default. To enable local transcription (no API needed), run /whatsapp:configure audio <language_code> (e.g. /whatsapp:configure audio es for Spanish)',
-            meta: {
-              chat_id: 'system',
-              message_id: 'connected-' + Date.now(),
-              user: 'system',
-              user_id: 'system',
-              ts: new Date().toISOString(),
+      // Only push the "connected" channel notification on the FIRST successful
+      // connection of this server's lifetime. Reconnects (network blips, status
+      // 440 from a colliding instance, etc.) keep logging to syslog but don't
+      // spam Claude with a fresh inbound system message every cycle.
+      if (!firstConnectAnnounced) {
+        firstConnectAnnounced = true
+        try {
+          mcp.notification({
+            method: 'notifications/claude/channel',
+            params: {
+              content: 'WhatsApp connected successfully! Ready to receive and send messages.\n\nTip: Voice messages are not transcribed by default. To enable local transcription (no API needed), run /whatsapp:configure audio <language_code> (e.g. /whatsapp:configure audio es for Spanish)',
+              meta: {
+                chat_id: 'system',
+                message_id: 'connected-' + Date.now(),
+                user: 'system',
+                user_id: 'system',
+                ts: new Date().toISOString(),
+              },
             },
-          },
-        })
-      } catch { /* MCP notification may fail */ }
+          })
+        } catch { /* MCP notification may fail */ }
+      }
     }
   })
 
