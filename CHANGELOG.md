@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.3.9
+
+### Fixes
+
+- Orphaned plugin processes no longer linger after Claude Code exits. `bootstrap.mjs` and `server.ts` now run a PPID watchdog: when the parent dies and the kernel reparents us (to launchd/init), we shut down within ~5s. Closes the source of the long-running orphans that fought new sessions for the WhatsApp auth.
+- Two simultaneous Claude Code sessions in the same workspace no longer trigger a status-440 (`connectionReplaced`) reconnect loop. The server now writes a PID lock to `<channel-dir>/server.pid` before opening Baileys; the second instance detects the live owner, stays idle, and emits a single channel notification explaining the situation. Stale locks (owner already dead) are reclaimed automatically.
+- Reconnects use exponential backoff with jitter (2s → 4s → 8s … capped at 5 min, ±30% randomization) instead of a fixed 5s delay. Network blips and edge-case collisions resolve in seconds instead of looping at a constant cadence; counter resets after a connection holds for ≥30s.
+- The `WhatsApp connected successfully!` channel notification now fires only on the first successful connection of the server's lifetime, not on every reconnect. Stops the agent from receiving (and replying to) hundreds of phantom system messages during transient disconnects. `syslog` still records every open for diagnostics.
+
 ## v1.3.8
 
 ### Changes
