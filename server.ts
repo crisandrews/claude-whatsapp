@@ -86,6 +86,7 @@ const AUTH_DIR = path.join(CHANNEL_DIR, 'auth')
 const INBOX_DIR = path.join(CHANNEL_DIR, 'inbox')
 const APPROVED_DIR = path.join(CHANNEL_DIR, 'approved')
 const ACCESS_FILE = path.join(CHANNEL_DIR, 'access.json')
+const PID_FILE = path.join(CHANNEL_DIR, 'server.pid')
 
 for (const d of [CHANNEL_DIR, AUTH_DIR, INBOX_DIR, APPROVED_DIR]) {
   fs.mkdirSync(d, { recursive: true, mode: 0o700 })
@@ -136,6 +137,46 @@ process.on('unhandledRejection', (err) => {
 process.on('uncaughtException', (err) => {
   syslog(`uncaught exception: ${err}`)
 })
+
+// ---------------------------------------------------------------------------
+// Single-instance lock — prevents two server processes from sharing the same
+// Baileys auth dir. WhatsApp Web allows only one device per credentials, so
+// concurrent connections kick each other out (status 440), looping forever.
+// We refuse to start the WhatsApp side when another live PID owns the lock,
+// but keep the MCP server up so Claude Code's tool calls still get a clean
+// error instead of a hang.
+// ---------------------------------------------------------------------------
+function acquireLock(): { ok: true } | { ok: false; existingPid: number } {
+  try {
+    if (fs.existsSync(PID_FILE)) {
+      const raw = fs.readFileSync(PID_FILE, 'utf8').trim()
+      const existingPid = parseInt(raw, 10)
+      if (!isNaN(existingPid) && existingPid !== process.pid) {
+        try {
+          process.kill(existingPid, 0) // signal 0 only checks existence
+          return { ok: false, existingPid }
+        } catch {
+          // Stale PID — owner is gone, we can claim it.
+          syslog(`stale lock found (PID ${existingPid} no longer alive), reclaiming`)
+        }
+      }
+    }
+    fs.writeFileSync(PID_FILE, String(process.pid))
+    return { ok: true }
+  } catch (err) {
+    syslog(`acquireLock: failed to write PID file: ${err}`)
+    // Don't block on filesystem errors — better to risk a duplicate than hang.
+    return { ok: true }
+  }
+}
+
+function releaseLock() {
+  try {
+    if (!fs.existsSync(PID_FILE)) return
+    const stored = parseInt(fs.readFileSync(PID_FILE, 'utf8').trim(), 10)
+    if (stored === process.pid) fs.unlinkSync(PID_FILE)
+  } catch {}
+}
 
 // ---------------------------------------------------------------------------
 // Security helpers
@@ -418,6 +459,28 @@ function writeStatus(status: string, details?: Record<string, any>) {
 }
 
 async function connectWhatsApp() {
+  const lock = acquireLock()
+  if (!lock.ok) {
+    syslog(`another instance owns the WhatsApp connection (PID ${lock.existingPid}), staying idle`)
+    writeStatus('idle_other_instance', { holder: lock.existingPid })
+    try {
+      mcp.notification({
+        method: 'notifications/claude/channel',
+        params: {
+          content: `WhatsApp is being held by another running plugin instance (PID ${lock.existingPid}). This MCP server will stay up and respond to tool calls, but it won't try to connect to WhatsApp until that instance exits. If this is unexpected, close any extra Claude Code sessions in this workspace.`,
+          meta: {
+            chat_id: 'system',
+            message_id: 'lock-held-' + Date.now(),
+            user: 'system',
+            user_id: 'system',
+            ts: new Date().toISOString(),
+          },
+        },
+      })
+    } catch {}
+    return
+  }
+
   const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR)
 
   sock = makeWASocket({
@@ -1041,6 +1104,7 @@ let shuttingDown = false
 function shutdown() {
   if (shuttingDown) return
   shuttingDown = true
+  releaseLock()
   sock?.end(undefined)
   setTimeout(() => process.exit(0), 2000)
 }
