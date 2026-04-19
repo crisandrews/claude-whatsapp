@@ -8,6 +8,13 @@ import fs from 'fs'
 import path from 'path'
 import crypto from 'crypto'
 import os from 'os'
+import {
+  splitJid,
+  matchesBot as matchesBotImpl,
+  parsePermissionReply,
+  acquireLock as acquireLockImpl,
+  type LockResult,
+} from './lib.js'
 
 // ---------------------------------------------------------------------------
 // Dynamic imports — Baileys, QRCode, Boom are loaded AFTER MCP handshake
@@ -146,28 +153,12 @@ process.on('uncaughtException', (err) => {
 // but keep the MCP server up so Claude Code's tool calls still get a clean
 // error instead of a hang.
 // ---------------------------------------------------------------------------
-function acquireLock(): { ok: true } | { ok: false; existingPid: number } {
-  try {
-    if (fs.existsSync(PID_FILE)) {
-      const raw = fs.readFileSync(PID_FILE, 'utf8').trim()
-      const existingPid = parseInt(raw, 10)
-      if (!isNaN(existingPid) && existingPid !== process.pid) {
-        try {
-          process.kill(existingPid, 0) // signal 0 only checks existence
-          return { ok: false, existingPid }
-        } catch {
-          // Stale PID — owner is gone, we can claim it.
-          syslog(`stale lock found (PID ${existingPid} no longer alive), reclaiming`)
-        }
-      }
-    }
-    fs.writeFileSync(PID_FILE, String(process.pid))
-    return { ok: true }
-  } catch (err) {
-    syslog(`acquireLock: failed to write PID file: ${err}`)
-    // Don't block on filesystem errors — better to risk a duplicate than hang.
-    return { ok: true }
-  }
+function acquireLock(): LockResult {
+  return acquireLockImpl({
+    lockPath: PID_FILE,
+    ownerPid: process.pid,
+    log: syslog,
+  })
 }
 
 function releaseLock() {
@@ -204,6 +195,13 @@ function assertSendable(filePath: string): void {
   if (real.startsWith(stateReal + path.sep) && !real.startsWith(inbox + path.sep)) {
     throw new Error('Refusing to send channel state file')
   }
+}
+
+// JID helpers (`splitJid`, pure `matchesBot`) live in lib.ts so they can be
+// unit-tested without dragging Baileys into the test runtime. Here we expose
+// a closure that captures the live bot identity for use inside gate().
+function matchesBot(jid: string | null | undefined): boolean {
+  return matchesBotImpl(jid, botJidLocal, botJidNamespace)
 }
 
 // ---------------------------------------------------------------------------
@@ -368,24 +366,55 @@ function saveAccess(state: AccessState) {
 // ---------------------------------------------------------------------------
 type GateResult = 'deliver' | 'pair' | 'drop'
 
-function gate(senderId: string, chatId: string, isGroup: boolean): GateResult {
+interface GateMentions {
+  mentioned: string[]
+  quotedAuthor?: string
+}
+
+const NO_MENTIONS: GateMentions = { mentioned: [] }
+
+function gate(
+  senderId: string,
+  chatId: string,
+  isGroup: boolean,
+  mentions: GateMentions = NO_MENTIONS,
+): GateResult {
   const access = loadAccess()
 
   if (access.dmPolicy === 'disabled') return 'drop'
 
-  // Check per-user allowlist (check both senderId and chatId — Baileys v7
-  // can identify the same user with different JID formats: @lid and @s.whatsapp.net)
-  if (access.allowFrom.includes(senderId)) return 'deliver'
-  if (!isGroup && access.allowFrom.includes(chatId)) return 'deliver'
-
-  // Check group config
+  // Group with explicit config: per-group settings (`allowFrom`,
+  // `requireMention`) take precedence over the global allowlist for that
+  // group, so a `requireMention: true` group filters even allowlisted users.
+  // Groups without config fall back to the global allowlist below.
   if (isGroup) {
     const g = access.groups[chatId]
     if (g) {
-      if (g.allowFrom.length === 0 || g.allowFrom.includes(senderId)) return 'deliver'
+      if (g.allowFrom.length > 0 && !g.allowFrom.includes(senderId)) return 'drop'
+      if (g.requireMention) {
+        if (!botJidLocal) {
+          // Bot identity not yet captured — race between connection.update
+          // 'open' and the first messages.upsert. Fail closed: drop rather
+          // than deliver something the user explicitly asked us to filter.
+          syslog('requireMention check skipped (bot JID not captured yet); dropping')
+          return 'drop'
+        }
+        const mentionedBot =
+          mentions.mentioned.some((j) => matchesBot(j)) ||
+          (mentions.quotedAuthor ? matchesBot(mentions.quotedAuthor) : false)
+        if (!mentionedBot) return 'drop'
+      }
+      return 'deliver'
     }
-    return 'drop'
   }
+
+  // Per-user allowlist (DMs and unconfigured groups).
+  // Check both senderId and chatId — Baileys v7 can identify the same user
+  // with different JID formats (@lid and @s.whatsapp.net).
+  if (access.allowFrom.includes(senderId)) return 'deliver'
+  if (!isGroup && access.allowFrom.includes(chatId)) return 'deliver'
+
+  if (isGroup) return 'drop'
 
   // DM from unknown sender
   if (access.dmPolicy === 'allowlist') return 'drop'
@@ -434,9 +463,9 @@ Prohibited — NEVER use these in WhatsApp replies:
 
 Messages over 4096 characters will be auto-chunked.
 
-Reactions as commands:
-- 👍 (thumbs up) means "proceed", "ok", "yes", "go ahead" — treat it as confirmation or approval of whatever was last discussed.
-- 👎 (thumbs down) means "no", "stop", "cancel" — treat it as rejection.
+Reactions:
+- When the plugin sends a permission request via WhatsApp (a "🔐 Claude wants to run..." message), the user can react with 👍/✅ to approve or 👎/❌ to deny. Those reactions are intercepted by the plugin and converted into permission decisions; you will not see them as inbound messages.
+- For reactions on regular messages: 👍 usually signals "ok/proceed", 👎 means "no/stop". Interpret contextually based on what the user was reacting to.
 - Other reactions are informational — acknowledge them naturally.
 
 Important:
@@ -452,6 +481,11 @@ Important:
 // ---------------------------------------------------------------------------
 let sock: WASocket | null = null
 let firstConnectAnnounced = false
+// Bot's own identity, captured on connection.update 'open'. Used for group
+// mention gating — see matchesBot() and gate(). Both pieces parsed once so
+// the per-message hot path doesn't re-split.
+let botJidLocal: string | null = null
+let botJidNamespace: string | null = null
 const QR_IMAGE_PATH = path.join(CHANNEL_DIR, 'qr.png')
 const STATUS_FILE = path.join(CHANNEL_DIR, 'status.json')
 
@@ -468,17 +502,28 @@ function writeStatus(status: string, details?: Record<string, any>) {
 
 async function connectWhatsApp() {
   const lock = acquireLock()
-  if (!lock.ok) {
-    syslog(`another instance owns the WhatsApp connection (PID ${lock.existingPid}), staying idle`)
-    writeStatus('idle_other_instance', { holder: lock.existingPid })
+  if (lock.kind !== 'acquired') {
+    let content: string
+    let messageId: string
+    if (lock.kind === 'contended') {
+      syslog(`another instance owns the WhatsApp connection (PID ${lock.existingPid}), staying idle`)
+      writeStatus('idle_other_instance', { holder: lock.existingPid })
+      content = `WhatsApp is being held by another running plugin instance (PID ${lock.existingPid}). This MCP server will stay up and respond to tool calls, but it won't try to connect to WhatsApp until that instance exits. If this is unexpected, close any extra Claude Code sessions in this workspace.`
+      messageId = 'lock-held-' + Date.now()
+    } else {
+      syslog(`acquireLock failed: ${lock.error}`)
+      writeStatus('lock_error', { error: lock.error })
+      content = `WhatsApp lock could not be acquired due to a filesystem error: ${lock.error}. The MCP server will stay up but won't connect to WhatsApp. Verify permissions and free space at ${PID_FILE}.`
+      messageId = 'lock-error-' + Date.now()
+    }
     try {
       mcp.notification({
         method: 'notifications/claude/channel',
         params: {
-          content: `WhatsApp is being held by another running plugin instance (PID ${lock.existingPid}). This MCP server will stay up and respond to tool calls, but it won't try to connect to WhatsApp until that instance exits. If this is unexpected, close any extra Claude Code sessions in this workspace.`,
+          content,
           meta: {
             chat_id: 'system',
-            message_id: 'lock-held-' + Date.now(),
+            message_id: messageId,
             user: 'system',
             user_id: 'system',
             ts: new Date().toISOString(),
@@ -570,6 +615,16 @@ async function connectWhatsApp() {
       syslog('WhatsApp connected successfully')
       lastConnectedAt = Date.now()
 
+      // Capture bot identity for group mention gating. Re-runs on every
+      // reconnect so a logout+relogin under a different JID picks up cleanly.
+      const parts = splitJid(sock?.user?.id)
+      if (parts) {
+        botJidLocal = parts.local
+        botJidNamespace = parts.namespace
+      } else {
+        syslog(`could not parse bot JID from sock.user.id: ${sock?.user?.id}`)
+      }
+
       // Only push the "connected" channel notification on the FIRST successful
       // connection of this server's lifetime. Reconnects (network blips, status
       // 440 from a colliding instance, etc.) keep logging to syslog but don't
@@ -618,8 +673,9 @@ async function handleInbound(msg: proto.IWebMessageInfo) {
   const pushName = msg.pushName || senderId.split('@')[0]
   const messageId = msg.key.id!
   const ts = new Date((msg.messageTimestamp as number) * 1000).toISOString()
+  const mentions = isGroup ? extractMentions(msg) : NO_MENTIONS
 
-  const result = gate(senderId, chatId, isGroup)
+  const result = gate(senderId, chatId, isGroup, mentions)
 
   if (result === 'drop') return
 
@@ -633,6 +689,17 @@ async function handleInbound(msg: proto.IWebMessageInfo) {
 
   // Extract message content
   const { text, meta } = await extractMessage(msg)
+
+  // Permission relay only applies in DMs — prompts are sent exclusively to
+  // non-group JIDs, so a reaction or `yes <id>` text in a group can never be
+  // a legitimate response and must not be consumed (otherwise an allowlisted
+  // user chatting in an allowlisted group could approve a tool by accident).
+  if (!isGroup) {
+    if (meta.reaction && meta.reacted_to_message_id) {
+      if (checkPermissionReaction(meta.reaction, meta.reacted_to_message_id, senderId)) return
+    }
+    if (text && checkPermissionResponse(text, senderId)) return
+  }
 
   // Log inbound message
   logConversation('in', pushName, text, meta)
@@ -652,6 +719,27 @@ async function handleInbound(msg: proto.IWebMessageInfo) {
       },
     },
   })
+}
+
+// ---------------------------------------------------------------------------
+// Extract @-mentions and quoted-author from any message subtype that carries
+// a `contextInfo` (text/caption messages all do). Used by gate() to enforce
+// per-group `requireMention` policy.
+// ---------------------------------------------------------------------------
+function extractMentions(msg: proto.IWebMessageInfo): GateMentions {
+  const m = msg.message
+  if (!m) return NO_MENTIONS
+  const ctx =
+    m.extendedTextMessage?.contextInfo ||
+    m.imageMessage?.contextInfo ||
+    m.videoMessage?.contextInfo ||
+    m.documentMessage?.contextInfo ||
+    m.audioMessage?.contextInfo ||
+    m.stickerMessage?.contextInfo
+  if (!ctx) return NO_MENTIONS
+  const mentioned = Array.isArray(ctx.mentionedJid) ? (ctx.mentionedJid as string[]) : []
+  const quotedAuthor = typeof ctx.participant === 'string' ? ctx.participant : undefined
+  return { mentioned, quotedAuthor }
 }
 
 // ---------------------------------------------------------------------------
@@ -919,29 +1007,180 @@ async function handleConfigChange() {
 }
 
 // ---------------------------------------------------------------------------
-// Permission relay (bidirectional)
+// Permission relay — bidirectional bridge between Claude Code's permission
+// requests and WhatsApp.
+//
+// Outbound: when Claude Code emits a permission_request notification, broadcast
+// a prompt to every allowlisted DM contact carrying the request's request_id
+// and a short summary of the tool. Remember each sent message ID so a later
+// reaction can be matched back.
+//
+// Inbound: an allowlisted user can reply with text (`yes <id>` / `no <id>`)
+// or react with 👍/✅ (allow) or 👎/❌ (deny). Either path triggers a
+// `notifications/claude/channel/permission` notification back to Claude Code.
+//
+// The terminal-side approval dialog stays active throughout — this channel is
+// additive, never blocking. If the user approves on the terminal first, late
+// WhatsApp responses are silently ignored (the pending entry is gone).
 // ---------------------------------------------------------------------------
-// Note: Permission relay is handled via raw message handler on the transport
-// level to avoid MCP SDK schema validation issues. The server listens for
-// permission_request notifications and relays them to WhatsApp users.
 
-function checkPermissionResponse(text: string, chatId: string): boolean {
-  const match = text.match(/^\s*(y|yes|n|no)\s+([a-km-z0-9]{5})\s*$/i)
-  if (!match) return false
+interface PendingPermission {
+  requestId: string
+  toolName: string
+  sentMessageIds: string[]
+  targets: string[]
+  timer: ReturnType<typeof setTimeout>
+}
 
-  const allowed = match[1].toLowerCase().startsWith('y')
-  const shortId = match[2]
+const pendingPermissions = new Map<string, PendingPermission>()
+const messageIdToRequestId = new Map<string, string>()
+const PERMISSION_TIMEOUT_MS = 5 * 60 * 1000
 
-  mcp.notification({
-    method: 'notifications/claude/channel/permission',
-    params: {
-      id_prefix: shortId,
-      chat_id: chatId,
-      decision: allowed ? 'allow' : 'deny',
-    },
-  })
+const APPROVE_EMOJI = new Set(['👍', '👍🏻', '👍🏼', '👍🏽', '👍🏾', '👍🏿', '✅'])
+const DENY_EMOJI = new Set(['👎', '👎🏻', '👎🏼', '👎🏽', '👎🏾', '👎🏿', '❌'])
 
+function clearPermission(requestId: string): void {
+  const entry = pendingPermissions.get(requestId)
+  if (!entry) return
+  clearTimeout(entry.timer)
+  for (const mid of entry.sentMessageIds) messageIdToRequestId.delete(mid)
+  pendingPermissions.delete(requestId)
+}
+
+function notifyPermissionDecision(requestId: string, behavior: 'allow' | 'deny'): void {
+  try {
+    mcp.notification({
+      method: 'notifications/claude/channel/permission',
+      params: { request_id: requestId, behavior },
+    })
+  } catch (err) {
+    syslog(`permission decision notify failed: ${err}`)
+  }
+}
+
+/**
+ * Try to interpret an inbound text as a permission response. Returns true if
+ * the text matched a pending request and was consumed (caller should NOT
+ * forward to Claude).
+ */
+function checkPermissionResponse(text: string, senderId: string): boolean {
+  const parsed = parsePermissionReply(text)
+  if (!parsed) return false
+  const entry = pendingPermissions.get(parsed.requestId)
+  if (!entry) return false
+  if (!entry.targets.includes(senderId)) return false
+  notifyPermissionDecision(parsed.requestId, parsed.behavior)
+  clearPermission(parsed.requestId)
   return true
+}
+
+/**
+ * Try to interpret an inbound reaction as a permission response. Returns
+ * true if the reaction matched a pending request's broadcast message and was
+ * consumed.
+ */
+function checkPermissionReaction(emoji: string, reactedToMessageId: string, senderId: string): boolean {
+  if (!reactedToMessageId) return false
+  const requestId = messageIdToRequestId.get(reactedToMessageId)
+  if (!requestId) return false
+  const entry = pendingPermissions.get(requestId)
+  if (!entry) return false
+  if (!entry.targets.includes(senderId)) return false
+  if (APPROVE_EMOJI.has(emoji)) {
+    notifyPermissionDecision(requestId, 'allow')
+    clearPermission(requestId)
+    return true
+  }
+  if (DENY_EMOJI.has(emoji)) {
+    notifyPermissionDecision(requestId, 'deny')
+    clearPermission(requestId)
+    return true
+  }
+  return false
+}
+
+/**
+ * Handle an inbound permission_request notification: broadcast a prompt to
+ * each allowlisted DM contact and remember message IDs for reaction matching.
+ */
+async function handlePermissionRequest(params: any): Promise<void> {
+  if (!sock) {
+    syslog('permission_request: WhatsApp not connected; dropping')
+    return
+  }
+  const requestIdRaw = typeof params?.request_id === 'string' ? params.request_id : null
+  if (!requestIdRaw) {
+    syslog('permission_request: missing request_id; ignoring')
+    return
+  }
+  // CC already emits lowercase; normalize defensively so any future change in
+  // its alphabet doesn't silently break our lookup symmetry.
+  const requestId = requestIdRaw.toLowerCase()
+
+  // Replace any prior entry under the same request_id (defensive — duplicate
+  // emissions or rapid re-asks shouldn't leak timers).
+  if (pendingPermissions.has(requestId)) {
+    syslog(`permission_request: replacing existing entry for request_id=${requestId}`)
+    clearPermission(requestId)
+  }
+
+  const toolName = typeof params?.tool_name === 'string' ? params.tool_name : 'a tool'
+  const description = typeof params?.description === 'string' ? params.description : ''
+  // CC truncates input_preview to ~200 chars on its side; we use it verbatim.
+  const inputPreview = typeof params?.input_preview === 'string' ? params.input_preview : ''
+
+  const access = loadAccess()
+  const targets = access.allowFrom.filter((j) => !j.endsWith('@g.us'))
+  if (targets.length === 0) {
+    syslog('permission_request: no allowlisted DM contacts to relay to')
+    return
+  }
+
+  const previewBlock = inputPreview ? `\n\`\`\`\n${inputPreview}\n\`\`\`\n` : ''
+  const message = `🔐 Claude wants to run *${toolName}*\n${description || '_(no description)_'}${previewBlock}\nReply *yes ${requestId}* / *no ${requestId}* or react 👍 / 👎.`
+
+  const sentMessageIds: string[] = []
+  for (const target of targets) {
+    try {
+      const result = await sock.sendMessage(target, { text: message })
+      const mid = result?.key?.id
+      if (mid) {
+        sentMessageIds.push(mid)
+        messageIdToRequestId.set(mid, requestId)
+      }
+    } catch (err) {
+      syslog(`permission_request: failed to send to ${target}: ${err}`)
+    }
+  }
+
+  if (sentMessageIds.length === 0) {
+    syslog('permission_request: no messages delivered, no entry created')
+    return
+  }
+
+  const timer = setTimeout(() => {
+    syslog(`permission ${requestId} timed out after ${PERMISSION_TIMEOUT_MS / 1000}s`)
+    clearPermission(requestId)
+  }, PERMISSION_TIMEOUT_MS)
+  if (typeof (timer as any).unref === 'function') (timer as any).unref()
+
+  pendingPermissions.set(requestId, { requestId, toolName, sentMessageIds, targets, timer })
+}
+
+/**
+ * Attach a low-level interceptor for inbound permission_request notifications.
+ * The MCP SDK's setNotificationHandler requires a Zod schema and rejects
+ * unknown methods, so we patch the transport's onmessage instead — additive,
+ * never replacing the SDK's own dispatch.
+ */
+function attachPermissionRequestInterceptor(transport: { onmessage?: ((msg: any) => void) | undefined }): void {
+  const original = transport.onmessage
+  transport.onmessage = (msg: any) => {
+    if (msg?.method === 'notifications/claude/channel/permission_request') {
+      handlePermissionRequest(msg?.params).catch((err) => syslog(`handlePermissionRequest: ${err}`))
+    }
+    if (typeof original === 'function') original(msg)
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1164,7 +1403,9 @@ setInterval(() => {
 // ---------------------------------------------------------------------------
 async function main() {
   // Start MCP server FIRST — must respond to handshake immediately
-  await mcp.connect(new StdioServerTransport())
+  const transport = new StdioServerTransport()
+  await mcp.connect(transport)
+  attachPermissionRequestInterceptor(transport)
 
   // Try to load Baileys and other heavy deps
   const ready = await loadDeps()

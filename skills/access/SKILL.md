@@ -136,8 +136,9 @@ Then apply:
 
 1. Read `access.json`
 2. Add to `groups` with defaults: `{"requireMention": true, "allowFrom": []}`
-3. Save `access.json`
-4. Explain: `requireMention: true` means the bot only responds when @mentioned
+3. If the user passed `--no-mention`, set `requireMention: false`
+4. Save `access.json`
+5. Explain: `requireMention: true` means the bot only responds when its own number is @-mentioned in the message OR when the user replies (quotes) one of the bot's prior messages. To open the group up to every message, re-add the group with `--no-mention`.
 
 ### `remove-group <group_jid>` — remove a group
 

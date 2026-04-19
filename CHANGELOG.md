@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.4.0
+
+### Fixes
+
+- Group `requireMention` is now actually enforced. The setting was declared on every group entry (`requireMention: true` by default) and documented in the `/whatsapp:access` skill, but the gate function never read it — every message in a configured group was delivered to Claude regardless of mentions. The bot's own JID is captured on connect, mentions and reply-to-quote authors are extracted from each inbound message, and groups marked `requireMention: true` now drop messages that neither @-mention the bot nor reply to one of its messages. If a message arrives before the bot identity is captured (a race between `connection.update` 'open' and the first `messages.upsert`), the gate fails closed.
+- `acquireLock()` no longer succeeds silently on filesystem errors. Replaced the non-atomic `existsSync` + `readFileSync` + `writeFileSync` sequence with a single `openSync(LOCK_FILE, 'wx')` (atomic create-or-fail via POSIX `O_EXCL` on macOS/Linux). EACCES, ENOSPC and similar errors now surface as a distinct `lock_error` status with a clear channel notification, instead of being swallowed and risking a duplicate connection. Corrupt or empty PID files are detected and reclaimed; stale-PID and self-PID cases each get a single bounded retry with `unlinkSync` race tolerance. Windows filesystems without true `O_EXCL` semantics may still allow concurrent acquisition.
+
+### Changes
+
+- WhatsApp reactions on permission requests are now treated as enforced approvals. When Claude Code sends a `notifications/claude/channel/permission_request`, the plugin broadcasts a `🔐 Claude wants to run *<tool>*` prompt to every allowlisted DM contact carrying the request's `request_id` (5 lowercase letters, no `l`). The DM target can react with 👍/✅ to allow or 👎/❌ to deny, or reply with `yes <id>` / `no <id>` (case-insensitive — mobile autocaps work). Either path emits `notifications/claude/channel/permission` with `{request_id, behavior}` back to Claude Code and clears the pending entry. Pending requests time out after 5 minutes. The terminal-side approval dialog stays active throughout — this WhatsApp channel is additive, never blocks the local prompt. Permission text/reaction handling is restricted to DM only, so a `yes <id>` typed in an allowlisted group never accidentally consumes a pending approval. Reactions on non-permission messages still flow through to Claude as `[Reacted with X]` and are interpreted contextually.
+- Pure helpers (`splitJid`, `matchesBot`, `parsePermissionReply`, `acquireLock`) extracted to `lib.ts` with a `node:test` suite (`npm test` → 28 tests) covering JID parsing, permission reply parsing, and lock acquisition under contention/staleness/corruption/filesystem-error.
+
 ## v1.3.9
 
 ### Fixes

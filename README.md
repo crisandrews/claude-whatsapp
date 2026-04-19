@@ -132,14 +132,35 @@ Default policy is `pairing`. IDs are WhatsApp JIDs — format depends on your Ba
 
 ### [Reactions](#reactions)
 
-Emoji reactions on messages are forwarded to Claude as commands:
+Reactions behave differently depending on what the user reacts to:
+
+**On a permission request** (a `🔐 Claude wants to run …` message): the plugin intercepts the reaction directly and converts it into an approve/deny decision sent back to Claude Code. The terminal prompt clears automatically.
 
 | Reaction | Meaning |
 | --- | --- |
-| 👍 | "Proceed", "ok", "yes" — confirms or approves |
-| 👎 | "No", "stop", "cancel" — rejects |
+| 👍 / ✅ | Approve the pending tool |
+| 👎 / ❌ | Deny the pending tool |
 
-Long-press any message in the chat and tap a reaction. Claude will interpret it in context.
+Skin-tone variants of 👍 / 👎 also work. Pending requests time out after 5 minutes; the terminal-side dialog stays active either way, so you can also approve there.
+
+**On a regular message**: the reaction is forwarded to Claude as `[Reacted with X]` and Claude interprets it from context — typically 👍 as "ok/proceed" and 👎 as "no/stop".
+
+### [Permission requests over WhatsApp](#permission-requests-over-whatsapp)
+
+When Claude Code asks to run a tool (e.g. a Bash command), the plugin broadcasts the request to every allowlisted DM contact:
+
+```
+🔐 Claude wants to run *Bash*
+ls -la /tmp
+
+Reply *yes ABC23* / *no ABC23* or react 👍 / 👎.
+```
+
+You can respond from your phone in two ways:
+- **Reply with text**: `yes <id>` to allow, `no <id>` to deny. Letters and digits accepted.
+- **React to the message**: 👍/✅ to allow, 👎/❌ to deny.
+
+Whoever responds first wins. The terminal prompt remains active as a fallback.
 
 ### [Media](#media)
 
