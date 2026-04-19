@@ -171,12 +171,12 @@ To switch modes after the fact, re-run `add-group` with or without the `--no-men
 
 The tools above are MCP tools — Claude picks them automatically based on what you ask. Some example things to say from your phone:
 
-- *"Borra ese último mensaje, me equivoqué."* → `delete_message`
-- *"Arma una encuesta en el grupo de la oficina: ¿pizza, sushi o tacos?"* → `send_poll`
-- *"Buscá en mi chat con Mariana cuándo hablamos de la dirección."* → `search_messages`
-- *"Trae 50 mensajes más viejos de este chat."* → `fetch_history`
-- *"Exportá este chat como markdown."* → `export_chat`
-- *"Editá tu última respuesta y cambiá X por Y."* → `edit_message`
+- *"Delete that last message, I changed my mind."* → `delete_message`
+- *"Run a poll in the office group: pizza, sushi, or tacos?"* → `send_poll`
+- *"Search my chat with Maria for where we talked about the address."* → `search_messages`
+- *"Pull 50 older messages from this chat."* → `fetch_history`
+- *"Export this chat as markdown."* → `export_chat`
+- *"Edit your last reply and change X to Y."* → `edit_message`
 
 **What's NOT a plugin feature (yet)**
 
