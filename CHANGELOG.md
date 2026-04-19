@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.8.1
+
+### Changes
+
+- Group discovery: when a message arrives from a group that isn't in the allowlist, the system log now records the group JID once per minute with a copy-pasteable `/whatsapp:access add-group <jid>` command, so finding a new group's JID stops requiring you to grep raw traffic.
+
 ## v1.8.0
 
 ### Changes
