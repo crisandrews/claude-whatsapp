@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.7.0
+
+### Changes
+
+- Local message store backed by SQLite (`better-sqlite3`) with FTS5 full-text indexing. Every inbound and outbound message the plugin sees is indexed automatically into `<channel-dir>/messages.db`; reactions, edits, file captions, and history-backfilled messages are all included. Three new MCP tools sit on top:
+  - `search_messages({query, chat_id?, limit?})` — FTS5 query with snippet, optionally scoped to a chat.
+  - `fetch_history({chat_id, count?})` — calls `sock.fetchMessageHistory` with the oldest known message in the chat as the anchor; backfilled messages arrive asynchronously via `messaging-history.set` and are indexed automatically.
+  - `export_chat({chat_id, format, since_ts?, until_ts?, limit?})` — writes a chronological export of the indexed rows to a file in the inbox dir. Formats: `markdown` (default), `jsonl`, `csv`.
+- DB file is created with `0600` perms; WAL journaling for concurrent reads while the channel keeps writing.
+- `messaging-history.set` handler indexes historical messages without running them through the gate (they're historical) or downloading their media (text/caption only).
+- Each indexed outbound row carries direction `out`, sender JID, and a `Claude` push name so exports render with two clear voices and FTS results disambiguate who said what.
+
 ## v1.6.0
 
 ### Security

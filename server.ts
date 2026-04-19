@@ -18,6 +18,18 @@ import {
   type ChunkMode,
   type LockResult,
 } from './lib.js'
+import {
+  initDb,
+  isDbReady,
+  indexMessage,
+  searchMessages,
+  getMessages,
+  getOldestMessage,
+  countMessages,
+  formatExport,
+  closeDb,
+  type ExportFormat,
+} from './db.js'
 
 // ---------------------------------------------------------------------------
 // Dynamic imports — Baileys, QRCode, Boom are loaded AFTER MCP handshake
@@ -97,6 +109,7 @@ const INBOX_DIR = path.join(CHANNEL_DIR, 'inbox')
 const APPROVED_DIR = path.join(CHANNEL_DIR, 'approved')
 const ACCESS_FILE = path.join(CHANNEL_DIR, 'access.json')
 const PID_FILE = path.join(CHANNEL_DIR, 'server.pid')
+const MESSAGES_DB_PATH = path.join(CHANNEL_DIR, 'messages.db')
 
 for (const d of [CHANNEL_DIR, AUTH_DIR, INBOX_DIR, APPROVED_DIR]) {
   fs.mkdirSync(d, { recursive: true, mode: 0o700 })
@@ -743,6 +756,33 @@ async function connectWhatsApp() {
     }
   })
 
+  // History backfill arrives here. Each batch may contain dozens of older
+  // messages; we don't run them through the gate (they're historical), we
+  // just index them so search/export pick them up.
+  sock.ev.on('messaging-history.set', ({ messages }: any) => {
+    if (!Array.isArray(messages) || !isDbReady()) return
+    for (const m of messages) {
+      try {
+        const k = m?.key
+        if (!k?.id || !k?.remoteJid) continue
+        const dir: 'in' | 'out' = k.fromMe ? 'out' : 'in'
+        const senderId: string | null = (k.participant || (k.fromMe ? null : k.remoteJid)) ?? null
+        const ts = Math.floor((m.messageTimestamp as number) || Date.now() / 1000)
+        const text = extractHistoricalText(m.message) ?? ''
+        indexMessage({
+          id: k.id,
+          chat_id: k.remoteJid,
+          sender_id: senderId,
+          push_name: m.pushName ?? null,
+          ts,
+          direction: dir,
+          text,
+          meta: { from_history: '1' },
+        })
+      } catch {}
+    }
+  })
+
   // Handle inbound messages
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     if (type !== 'notify') return
@@ -810,6 +850,20 @@ async function handleInbound(msg: proto.IWebMessageInfo) {
   // Extract message content
   const { text, meta } = await extractMessage(msg)
 
+  // Local index: every delivered inbound is recorded so search/export/
+  // history tools can answer queries without re-fetching from WhatsApp.
+  // Reactions and pure-meta messages still get indexed (text may be `[...]`).
+  indexMessage({
+    id: messageId,
+    chat_id: chatId,
+    sender_id: senderId,
+    push_name: pushName,
+    ts: Math.floor((msg.messageTimestamp as number) || Date.now() / 1000),
+    direction: 'in',
+    text,
+    meta,
+  })
+
   // Permission relay only applies in DMs — prompts are sent exclusively to
   // non-group JIDs, so a reaction or `yes <id>` text in a group can never be
   // a legitimate response and must not be consumed (otherwise an allowlisted
@@ -839,6 +893,24 @@ async function handleInbound(msg: proto.IWebMessageInfo) {
       },
     },
   })
+}
+
+// Lightweight text extraction for history backfill — text/caption only,
+// without touching the network. Mirrors the surface of extractMessage()
+// without its media-download side effects.
+function extractHistoricalText(m: any): string | null {
+  if (!m) return null
+  if (typeof m.conversation === 'string' && m.conversation) return m.conversation
+  if (typeof m.extendedTextMessage?.text === 'string') return m.extendedTextMessage.text
+  if (typeof m.imageMessage?.caption === 'string' && m.imageMessage.caption) return `[Image] ${m.imageMessage.caption}`
+  if (m.imageMessage) return '[Image]'
+  if (typeof m.videoMessage?.caption === 'string' && m.videoMessage.caption) return `[Video] ${m.videoMessage.caption}`
+  if (m.videoMessage) return '[Video]'
+  if (m.audioMessage) return '[Audio]'
+  if (m.documentMessage) return `[Document] ${m.documentMessage.fileName ?? ''}`.trim()
+  if (m.stickerMessage) return '[Sticker]'
+  if (m.reactionMessage?.text) return `[Reacted with ${m.reactionMessage.text}]`
+  return null
 }
 
 // ---------------------------------------------------------------------------
@@ -1371,6 +1443,46 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
         required: ['attachment_path'],
       },
     },
+    {
+      name: 'search_messages',
+      description: 'Full-text search the local message store (FTS5). Indexes every inbound and outbound message the plugin sees, plus anything fetched via fetch_history. Returns matched messages with a short snippet, sender, chat, and timestamp. Optionally scope to a single chat.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          query: { type: 'string', description: 'FTS5 query. Supports MATCH syntax: plain words for AND, "exact phrase", word*, NEAR(a b, 5), -excluded.' },
+          chat_id: { type: 'string', description: 'Optional: restrict to a single chat JID' },
+          limit: { type: 'number', description: 'Max results (default 50, max 500)' },
+        },
+        required: ['query'],
+      },
+    },
+    {
+      name: 'fetch_history',
+      description: 'Ask WhatsApp to ship older messages for a chat (sock.fetchMessageHistory). The plugin needs at least one already-known message in that chat as the anchor. Backfilled messages arrive asynchronously via the messaging-history.set event and are indexed automatically — call again or use search_messages to see them.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          chat_id: { type: 'string', description: 'JID of the chat to backfill' },
+          count: { type: 'number', description: 'Approximate number of messages to request (default 50)' },
+        },
+        required: ['chat_id'],
+      },
+    },
+    {
+      name: 'export_chat',
+      description: 'Export the local store of a chat to a file under the inbox directory. Returns the file path. Useful for "summarize this chat", "give me a transcript", or for handing off to other tools.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          chat_id: { type: 'string', description: 'JID of the chat to export' },
+          format: { type: 'string', enum: ['markdown', 'jsonl', 'csv'], description: 'Output format (default markdown)' },
+          since_ts: { type: 'number', description: 'Optional unix-seconds lower bound' },
+          until_ts: { type: 'number', description: 'Optional unix-seconds upper bound' },
+          limit: { type: 'number', description: 'Max rows in the export (default 500, max 500)' },
+        },
+        required: ['chat_id'],
+      },
+    },
   ],
 }))
 
@@ -1397,6 +1509,21 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       const { chat_id, text, reply_to, file_path } = args
       assertAllowedChat(chat_id)
 
+      // Index an outbound send into the local message store.
+      const indexOutbound = (sent: any, body: string, meta?: Record<string, string>) => {
+        if (!sent?.key?.id) return
+        indexMessage({
+          id: sent.key.id,
+          chat_id,
+          sender_id: botJidLocal && botJidNamespace ? `${botJidLocal}@${botJidNamespace}` : null,
+          push_name: 'Claude',
+          ts: Math.floor(Date.now() / 1000),
+          direction: 'out',
+          text: body,
+          meta: meta ?? null,
+        })
+      }
+
       // Handle file attachment
       if (file_path) {
         const absPath = path.resolve(file_path)
@@ -1408,14 +1535,15 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
 
         const quoted = reply_to ? { key: { remoteJid: chat_id, id: reply_to, fromMe: false } } : undefined
 
+        let sent: any
         if (imageExts.includes(ext)) {
-          await sock.sendMessage(
+          sent = await sock.sendMessage(
             chat_id,
             { image: { url: absPath }, caption: text || undefined },
             { quoted: quoted as any },
           )
         } else {
-          await sock.sendMessage(
+          sent = await sock.sendMessage(
             chat_id,
             {
               document: { url: absPath },
@@ -1427,6 +1555,10 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
           )
         }
 
+        indexOutbound(sent, text ? `[File: ${path.basename(absPath)}] ${text}` : `[File: ${path.basename(absPath)}]`, {
+          attachment_kind: imageExts.includes(ext) ? 'image' : 'document',
+          attachment_filename: path.basename(absPath),
+        })
         logConversation('out', 'Claude', `[File: ${path.basename(absPath)}] ${text || ''}`, { chat_id })
         return { content: [{ type: 'text', text: `Sent file: ${path.basename(absPath)}` }] }
       }
@@ -1461,8 +1593,9 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
         const mimetype = looksLikeMarkdown ? 'text/markdown' : 'text/plain'
         const tmpPath = path.join(os.tmpdir(), `wachan-${Date.now()}-${filename}`)
         fs.writeFileSync(tmpPath, text)
+        let docSent: any
         try {
-          await sock.sendMessage(
+          docSent = await sock.sendMessage(
             chat_id,
             { document: { url: tmpPath }, mimetype, fileName: filename },
             { quoted: quoted as any },
@@ -1470,6 +1603,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
         } finally {
           try { fs.unlinkSync(tmpPath) } catch {}
         }
+        indexOutbound(docSent, text, { attachment_kind: 'document', attachment_filename: filename, attachment_mimetype: mimetype })
         try { await sock.sendPresenceUpdate('paused', chat_id) } catch {}
         logConversation('out', 'Claude', `[Document: ${filename}] (${text.length} chars)`, { chat_id })
         return { content: [{ type: 'text', text: `Sent as ${filename} (${text.length} chars)` }] }
@@ -1482,11 +1616,12 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
         const useQuote =
           replyToMode === 'all' ||
           (replyToMode === 'first' && i === 0)
-        await sock.sendMessage(
+        const sent = await sock.sendMessage(
           chat_id,
           { text: chunks[i] },
           { quoted: useQuote ? (quoted as any) : undefined },
         )
+        indexOutbound(sent, chunks[i])
       }
 
       // Clear typing indicator
@@ -1533,6 +1668,18 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
         edit: { remoteJid: chat_id, id: message_id, fromMe: true } as any,
       })
 
+      // Mirror the edit in the local index (REPLACE on UNIQUE(chat_id,id)).
+      indexMessage({
+        id: message_id,
+        chat_id,
+        sender_id: botJidLocal && botJidNamespace ? `${botJidLocal}@${botJidNamespace}` : null,
+        push_name: 'Claude',
+        ts: Math.floor(Date.now() / 1000),
+        direction: 'out',
+        text,
+        meta: { edited: '1' },
+      })
+
       logConversation('out', 'Claude', `[Edit ${message_id}] ${text}`, { chat_id })
       return { content: [{ type: 'text', text: `Edited message ${message_id}` }] }
     }
@@ -1557,6 +1704,79 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       }
     }
 
+    case 'search_messages': {
+      if (!isDbReady()) {
+        return { content: [{ type: 'text', text: 'Local message store not available — search disabled.' }] }
+      }
+      const query = (args as any).query as string
+      const chat_id = (args as any).chat_id as string | undefined
+      const limit = (args as any).limit as number | undefined
+      if (!query || typeof query !== 'string') throw new Error('query is required')
+      const results = searchMessages({ query, chat_id, limit })
+      if (results.length === 0) {
+        return { content: [{ type: 'text', text: 'No matches.' }] }
+      }
+      const formatted = results.map((r) => {
+        const when = new Date(r.ts * 1000).toISOString()
+        const who = r.direction === 'out' ? 'Claude' : (r.push_name || r.sender_id || r.chat_id)
+        const snippet = r.snippet || (r.text.length > 120 ? r.text.slice(0, 120) + '…' : r.text)
+        return `• [${when}] ${who} (${r.chat_id}, msg ${r.id})\n  ${snippet}`
+      }).join('\n\n')
+      return { content: [{ type: 'text', text: `${results.length} match${results.length === 1 ? '' : 'es'}:\n\n${formatted}` }] }
+    }
+
+    case 'fetch_history': {
+      if (!sock) throw new Error('WhatsApp is not connected')
+      const chat_id = (args as any).chat_id as string
+      const count = ((args as any).count as number | undefined) ?? 50
+      if (!chat_id) throw new Error('chat_id is required')
+      const oldest = getOldestMessage(chat_id)
+      if (!oldest) {
+        return { content: [{ type: 'text', text: `No anchor message known for ${chat_id} — wait for at least one live message before requesting history.` }] }
+      }
+      // Baileys expects oldestMsgTimestamp in milliseconds.
+      const key = { remoteJid: oldest.chat_id, id: oldest.id, fromMe: oldest.direction === 'out' }
+      try {
+        const sessionId = await (sock as any).fetchMessageHistory(count, key, oldest.ts * 1000)
+        return {
+          content: [{
+            type: 'text',
+            text: `History request sent for ${chat_id} (anchor msg ${oldest.id}, count ~${count}, session ${sessionId}). Backfilled messages will arrive asynchronously and be indexed automatically — call search_messages or fetch_history again in a few seconds to see them.`,
+          }],
+        }
+      } catch (err: any) {
+        return { content: [{ type: 'text', text: `fetchMessageHistory failed: ${err?.message ?? err}` }] }
+      }
+    }
+
+    case 'export_chat': {
+      if (!isDbReady()) {
+        return { content: [{ type: 'text', text: 'Local message store not available — export disabled.' }] }
+      }
+      const chat_id = (args as any).chat_id as string
+      const format = ((args as any).format as ExportFormat | undefined) ?? 'markdown'
+      const since_ts = (args as any).since_ts as number | undefined
+      const until_ts = (args as any).until_ts as number | undefined
+      const limit = ((args as any).limit as number | undefined) ?? 500
+      if (!chat_id) throw new Error('chat_id is required')
+      const rows = getMessages({ chat_id, after_ts: since_ts, before_ts: until_ts, limit })
+      if (rows.length === 0) {
+        return { content: [{ type: 'text', text: `No messages indexed for ${chat_id}.` }] }
+      }
+      const body = formatExport(rows, format)
+      const ext = format === 'jsonl' ? 'jsonl' : format === 'csv' ? 'csv' : 'md'
+      const filename = `export-${chat_id.replace(/[^a-zA-Z0-9]/g, '_')}-${Date.now()}.${ext}`
+      const filepath = path.join(INBOX_DIR, filename)
+      fs.writeFileSync(filepath, body, { mode: 0o600 })
+      const total = countMessages(chat_id)
+      return {
+        content: [{
+          type: 'text',
+          text: `Exported ${rows.length} of ${total} indexed messages from ${chat_id} as ${format} → ${filepath}`,
+        }],
+      }
+    }
+
     default:
       throw new Error(`Unknown tool: ${req.params.name}`)
   }
@@ -1570,6 +1790,7 @@ function shutdown() {
   if (shuttingDown) return
   shuttingDown = true
   releaseLock()
+  closeDb()
   sock?.end(undefined)
   setTimeout(() => process.exit(0), 2000)
 }
@@ -1619,6 +1840,7 @@ async function main() {
       if (await loadDeps()) {
         clearInterval(depCheck)
         logger = pino({ level: 'silent' })
+        await initDb(MESSAGES_DB_PATH)
         watchApproved()
         watchConfig()
         initTranscriber().catch(() => {})
@@ -1630,6 +1852,12 @@ async function main() {
 
   // Deps loaded — initialize logger and connect
   logger = pino({ level: 'silent' })
+
+  // Initialize the local message store. Failure is non-fatal — channel
+  // delivery still works, only search/export/history tools degrade.
+  if (!(await initDb(MESSAGES_DB_PATH))) {
+    syslog('messages.db could not be opened — search/export/history tools will return empty')
+  }
 
   // Initialize audio transcription if enabled (non-blocking)
   initTranscriber().catch(() => {})

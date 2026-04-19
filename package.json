@@ -1,6 +1,6 @@
 {
   "name": "claude-whatsapp-channel",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "author": "crisandrews",
   "private": true,
   "type": "module",
@@ -16,6 +16,7 @@
     "qrcode": "^1.5.4",
     "tsx": "^4.19.0",
     "@huggingface/transformers": "^4.0.0",
-    "ogg-opus-decoder": "*"
+    "ogg-opus-decoder": "*",
+    "better-sqlite3": "^12.9.0"
   }
 }
