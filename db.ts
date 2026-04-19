@@ -228,6 +228,46 @@ export function getMessages(opts: GetMessagesOptions): MessageRow[] {
   }
 }
 
+export interface ChatSender {
+  sender_id: string
+  push_name: string | null
+  message_count: number
+  last_seen_ts: number
+}
+
+export function getChatSenders(chat_id: string, since_ts?: number): ChatSender[] {
+  if (!dbInstance) return []
+  // Inbound rows only — we never want to suggest "Claude" as a member to
+  // whitelist. Push name is taken from the most recent message (a sender
+  // can change push name over time).
+  const conditions = ['chat_id = @chat_id', "direction = 'in'", 'sender_id IS NOT NULL']
+  if (since_ts !== undefined) conditions.push('ts >= @since_ts')
+  const sql = `
+    SELECT
+      sender_id,
+      (SELECT push_name FROM messages
+        WHERE chat_id = m.chat_id AND sender_id = m.sender_id AND push_name IS NOT NULL
+        ORDER BY ts DESC LIMIT 1) AS push_name,
+      COUNT(*) AS message_count,
+      MAX(ts) AS last_seen_ts
+    FROM messages m
+    WHERE ${conditions.join(' AND ')}
+    GROUP BY sender_id
+    ORDER BY last_seen_ts DESC
+  `
+  try {
+    const rows = dbInstance.prepare(sql).all({ chat_id, since_ts }) as any[]
+    return rows.map((r) => ({
+      sender_id: r.sender_id,
+      push_name: r.push_name ?? null,
+      message_count: r.message_count,
+      last_seen_ts: r.last_seen_ts,
+    }))
+  } catch {
+    return []
+  }
+}
+
 export function getOldestMessage(chat_id: string): MessageRow | null {
   if (!dbInstance) return null
   try {

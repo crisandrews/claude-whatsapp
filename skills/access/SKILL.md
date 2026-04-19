@@ -64,13 +64,16 @@ All access state lives in `$STATE_DIR/access.json`. Default when missing:
 
 ### No args — status
 
-Read `access.json` (missing = defaults). Show:
+Read `access.json` (missing = defaults). Also read `$STATE_DIR/recent-groups.json` if it exists. Show:
+
 - DM policy and what it means
 - Allowed senders: count and list of JIDs
-- Groups: list with config
+- Configured groups: list each with its mention setting (`requireMention: true` → "mention-only", `false` → "open") and its `allowFrom` (empty → "any participant can trigger", non-empty → "restricted to: \<list\>")
 - Pending pairings: codes, sender IDs, expiry
+- **Recently dropped groups** (from `recent-groups.json`): for each entry sorted by `last_seen_ts` desc, show the JID, the `last_sender_push_name`, the `drop_count`, and a copy-paste command suggestion: ``/whatsapp:access add-group <jid>``. If the file is empty or missing, omit the section entirely. Cap at the top 10 to keep the listing skimmable.
 
 End with a concrete next step based on state:
+- Recently dropped groups exist: *"Pick one and run the suggested `add-group` command (add `--no-mention` if you want every message in the group to reach Claude instead of only @-mentions)."*
 - Nobody allowed, policy is pairing: *"DM your WhatsApp number from another phone. It replies with a code; approve with `/whatsapp:access pair <code>`."*
 - Someone allowed, policy still pairing: *"You have people paired. Lock it down with `/whatsapp:access policy allowlist`."*
 - Policy is allowlist: *"Locked. Only your allowlist can reach Claude."*
@@ -138,9 +141,34 @@ Then apply:
 2. Add to `groups` with defaults: `{"requireMention": true, "allowFrom": []}`
 3. If the user passed `--no-mention`, set `requireMention: false`
 4. Save `access.json`
-5. Explain: `requireMention: true` means the bot only responds when its own number is @-mentioned in the message OR when the user replies (quotes) one of the bot's prior messages. To open the group up to every message, re-add the group with `--no-mention`.
+5. **Also** read `$STATE_DIR/recent-groups.json` if it exists; if `<group_jid>` is in there, remove that entry and write the file back (atomically: tmp + rename) so the discovery list stops surfacing this group.
+6. Explain the four resulting policies the user can express on this group:
+   - **Open to everyone** — `add-group <jid> --no-mention` (every message goes to Claude).
+   - **Mention-only (everyone)** — `add-group <jid>` (default; Claude only sees messages that @-mention the bot or quote-reply one of its messages).
+   - **Restricted, mention-only** — after `add-group <jid>`, run `group-allow <jid> <member-jid>` for each member who is allowed to trigger the bot.
+   - **Restricted, open** — after `add-group <jid> --no-mention`, run `group-allow <jid> <member-jid>`.
+7. Make explicit that **adding a person to a group's allowlist does NOT let them DM the bot** — DMs are still gated by `dmPolicy` and `allowFrom`. To DM, that person must pair separately.
 
-### `remove-group <group_jid>` — remove a group
+### `group-allow <group_jid> <member_jid>` — restrict a group to specific members
+
+1. Read `access.json`
+2. If `groups[<group_jid>]` doesn't exist, refuse with: "Group not configured. Run `/whatsapp:access add-group <group_jid>` first." Do NOT auto-add — the user picks the mention policy explicitly.
+3. Append `<member_jid>` to `groups[<group_jid>].allowFrom` (skip if already present).
+4. Save `access.json`
+5. Confirm: tell the user the group is now restricted-mode, list every JID currently in the group's `allowFrom`, and remind them whether `requireMention` is on or off (read from `groups[<group_jid>].requireMention`).
+6. To find member JIDs to whitelist, suggest the user ask Claude to call the `list_group_senders` tool with the group JID — it queries the local message store for participants who have spoken in that chat.
+
+### `group-revoke <group_jid> <member_jid>` — remove a member from a group's whitelist
+
+1. Read `access.json`
+2. If `groups[<group_jid>]` doesn't exist, tell the user there's nothing to revoke and exit.
+3. Remove `<member_jid>` from `groups[<group_jid>].allowFrom` (no-op if absent).
+4. Save `access.json`
+5. Confirm:
+   - If `allowFrom` is now non-empty, list the remaining whitelisted JIDs.
+   - If `allowFrom` is now empty, tell the user the group went back to "anyone in the group can trigger" (still subject to `requireMention`).
+
+### `remove-group <group_jid>` — remove a group entirely
 
 1. Read `access.json`
 2. Delete the group entry

@@ -126,30 +126,39 @@ Default policy is `pairing`. IDs are WhatsApp JIDs — format depends on your Ba
 
 ### [Groups](#access-groups)
 
-WhatsApp groups are off by default — even if you've already paired the people in them. You explicitly opt the bot into each group.
+> **Group access is fully independent of DM access.** Allowing someone in a group does NOT let them DM the bot. To DM, that person still has to pair (or be added with `/whatsapp:access allow`). And conversely, a paired DM contact does NOT automatically get to talk to the bot in groups — you opt the bot into each group explicitly.
 
 | Command | Description |
 | --- | --- |
-| `/whatsapp:access add-group <jid>` | Allow a group. Default mode: only delivers messages that @-mention the bot or quote one of its prior messages. |
-| `/whatsapp:access add-group <jid> --no-mention` | Allow a group with no mention filter — every message in the group goes to Claude. |
-| `/whatsapp:access remove-group <jid>` | Stop accepting messages from a group. |
+| `/whatsapp:access add-group <jid>` | Allow a group, mention-only (default). |
+| `/whatsapp:access add-group <jid> --no-mention` | Allow a group, open delivery (every message goes to Claude). |
+| `/whatsapp:access group-allow <group-jid> <member-jid>` | Restrict the group to specific members (anyone not listed is dropped). |
+| `/whatsapp:access group-revoke <group-jid> <member-jid>` | Remove a member from the group's whitelist. Empty whitelist means "anyone in the group can trigger" again. |
+| `/whatsapp:access remove-group <jid>` | Stop accepting messages from the group entirely. |
 
-**How to add the bot to a group**
+**Policy matrix**
+
+| Goal | Commands |
+| --- | --- |
+| Anyone in the group, every message → Claude | `add-group <jid> --no-mention` |
+| Anyone in the group, only when they @-mention or quote the bot | `add-group <jid>` (default) |
+| Only specific people, only when they @-mention or quote the bot | `add-group <jid>` then `group-allow <jid> <member-jid>` (one per allowed member) |
+| Only specific people, every message they send → Claude | `add-group <jid> --no-mention` then `group-allow <jid> <member-jid>` |
+
+You can switch the mention setting after the fact by re-running `add-group` with or without `--no-mention`. The whitelist (`allowFrom`) is preserved.
+
+**Discovery flow — adding the bot to a group**
 
 1. In WhatsApp, open the group → **Group info** → **Add participant** → pick the contact you saved for the bot's number.
-2. Anyone in the group sends a message. The plugin sees it but **drops it silently** because the group isn't allowed yet.
-3. Look at the system log (`tail -f .whatsapp/logs/system.log` for project-local installs, or `tail -f ~/.claude/channels/whatsapp/logs/system.log` for global). The plugin logs a hint every minute per unknown group:
-   ```
-   unknown group dropped a message: 120363xxxxxxxxx@g.us (sender push name: Juan) — allow with /whatsapp:access add-group 120363xxxxxxxxx@g.us
-   ```
-4. Run that command. From then on, the group is delivered to Claude according to the mention setting.
+2. Anyone in the group sends a message. The bot drops it (the group isn't configured yet) but records the JID.
+3. Run `/whatsapp:access` — at the bottom, under **Recently dropped groups**, the new group shows up with a copy-paste `add-group` command and the most recent sender's push name to help you recognize the chat.
+4. Run that command, optionally with `--no-mention` if you want open delivery.
+5. To restrict to specific people in the group, ask Claude to **list the senders** in that chat — under the hood it calls the `list_group_senders` tool against the local store and returns each participant's push name + JID. Pick whose JIDs you want to whitelist and run `group-allow <group-jid> <member-jid>` for each.
 
-**Mention-only vs full delivery**
+**Mention-only vs open delivery, in plain terms**
 
-- `requireMention: true` (default) — Claude only sees a group message if it @-mentions the bot or replies/quotes one of the bot's messages. Use this for busy groups where Claude shouldn't react to every message.
-- `requireMention: false` (set with `--no-mention`) — every group message goes to Claude. Use this for small focused groups where Claude is supposed to participate continuously.
-
-To switch modes after the fact, re-run `add-group` with or without the `--no-mention` flag — it overwrites the existing entry.
+- **Mention-only**: Claude doesn't see a group message at all unless someone explicitly @-mentions the bot or quote-replies one of its messages. Good for active groups where Claude should only chime in when called.
+- **Open**: every message in the group reaches Claude. Good for small focused chats where Claude is meant to participate continuously.
 
 ## [Features](#features)
 
@@ -165,6 +174,7 @@ To switch modes after the fact, re-run `add-group` with or without the `--no-men
 | `download_attachment` | Access downloaded media from the inbox. |
 | `search_messages` | Full-text search the local message store. Supports `word*`, `"exact phrase"`, `NEAR(a b, 5)`, `-excluded`. Optionally scoped to a chat. |
 | `fetch_history` | Ask WhatsApp to ship older messages for a chat. Anchor is the oldest known message; backfilled messages arrive in the background and are indexed automatically. |
+| `list_group_senders` | List the participants who have spoken in a chat (group or DM), drawn from the local message store. Useful for picking which member to whitelist with `group-allow`. |
 | `export_chat` | Dump a chat from the local store as `markdown`, `jsonl`, or `csv` under the inbox directory. Optional `since_ts` / `until_ts` window. |
 
 ### [Talking to Claude through WhatsApp](#talking-to-claude-through-whatsapp)
@@ -175,6 +185,7 @@ The tools above are MCP tools — Claude picks them automatically based on what 
 - *"Run a poll in the office group: pizza, sushi, or tacos?"* → `send_poll`
 - *"Search my chat with Maria for where we talked about the address."* → `search_messages`
 - *"Pull 50 older messages from this chat."* → `fetch_history`
+- *"Who's been talking in the office group lately?"* → `list_group_senders`
 - *"Export this chat as markdown."* → `export_chat`
 - *"Edit your last reply and change X to Y."* → `edit_message`
 

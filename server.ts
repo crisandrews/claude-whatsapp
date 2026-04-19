@@ -25,6 +25,7 @@ import {
   searchMessages,
   getMessages,
   getOldestMessage,
+  getChatSenders,
   countMessages,
   formatExport,
   closeDb,
@@ -110,6 +111,7 @@ const APPROVED_DIR = path.join(CHANNEL_DIR, 'approved')
 const ACCESS_FILE = path.join(CHANNEL_DIR, 'access.json')
 const PID_FILE = path.join(CHANNEL_DIR, 'server.pid')
 const MESSAGES_DB_PATH = path.join(CHANNEL_DIR, 'messages.db')
+const RECENT_GROUPS_FILE = path.join(CHANNEL_DIR, 'recent-groups.json')
 
 for (const d of [CHANNEL_DIR, AUTH_DIR, INBOX_DIR, APPROVED_DIR]) {
   fs.mkdirSync(d, { recursive: true, mode: 0o700 })
@@ -828,10 +830,14 @@ async function handleInbound(msg: proto.IWebMessageInfo) {
   const result = gate(senderId, chatId, isGroup, mentions)
 
   if (result === 'drop') {
-    // Discovery hint: when a message from an unknown group is dropped, log
-    // it once per minute per group so the user can find the JID to allow
-    // (otherwise the only way to learn a group's JID is to grep traffic).
-    if (isGroup) maybeLogUnknownGroup(chatId, msg.pushName || '')
+    // Discovery: when a message from an unknown group is dropped, persist
+    // the JID + most recent sender to recent-groups.json so /whatsapp:access
+    // can list it inline. We only record dropped-because-unconfigured
+    // groups (an existing group config that drops by allowFrom or
+    // requireMention is intentional, not a discovery signal).
+    if (isGroup && !loadAccess().groups[chatId]) {
+      maybeLogUnknownGroup(chatId, senderId, msg.pushName || '')
+    }
     return
   }
 
@@ -902,15 +908,78 @@ async function handleInbound(msg: proto.IWebMessageInfo) {
 }
 
 // Discovery aid: when a message arrives from a group that isn't on the
-// allowlist, log the JID once per minute per group so the user can find
-// it (only place where group JIDs surface in the wild). Throttled because
-// a chatty group would otherwise spam syslog.
-const unknownGroupLastLogged = new Map<string, number>()
-function maybeLogUnknownGroup(chatId: string, pushName: string): void {
-  const now = Date.now()
-  const last = unknownGroupLastLogged.get(chatId) ?? 0
-  if (now - last < 60_000) return
-  unknownGroupLastLogged.set(chatId, now)
+// allowlist, persist the JID + most recent sender into recent-groups.json
+// so /whatsapp:access can list it inline (instead of forcing the user to
+// grep system.log). Bounded LRU so a long-running session doesn't grow
+// without limit. Syslog still fires (throttled per minute per group) so
+// power users tailing logs see it too.
+interface RecentGroupEntry {
+  first_seen_ts: number
+  last_seen_ts: number
+  drop_count: number
+  last_sender_push_name: string
+  last_sender_id: string
+}
+const RECENT_GROUPS_LIMIT = 50
+const recentGroupsSyslogLast = new Map<string, number>()
+
+function loadRecentGroups(): Record<string, RecentGroupEntry> {
+  try {
+    return JSON.parse(fs.readFileSync(RECENT_GROUPS_FILE, 'utf8'))
+  } catch {
+    return {}
+  }
+}
+
+function saveRecentGroups(state: Record<string, RecentGroupEntry>): void {
+  try {
+    const tmp = RECENT_GROUPS_FILE + '.tmp'
+    fs.writeFileSync(tmp, JSON.stringify(state, null, 2) + '\n', { mode: 0o600 })
+    fs.renameSync(tmp, RECENT_GROUPS_FILE)
+  } catch {
+    // Best-effort: discovery shouldn't break the message path.
+  }
+}
+
+function recordUnknownGroup(chatId: string, senderId: string, pushName: string): void {
+  const state = loadRecentGroups()
+  const now = Math.floor(Date.now() / 1000)
+  const existing = state[chatId]
+  state[chatId] = existing
+    ? {
+        ...existing,
+        last_seen_ts: now,
+        drop_count: existing.drop_count + 1,
+        last_sender_push_name: pushName || existing.last_sender_push_name,
+        last_sender_id: senderId || existing.last_sender_id,
+      }
+    : {
+        first_seen_ts: now,
+        last_seen_ts: now,
+        drop_count: 1,
+        last_sender_push_name: pushName,
+        last_sender_id: senderId,
+      }
+  // LRU eviction by last_seen_ts.
+  const entries = Object.entries(state)
+  if (entries.length > RECENT_GROUPS_LIMIT) {
+    entries.sort(([, a], [, b]) => b.last_seen_ts - a.last_seen_ts)
+    const trimmed: Record<string, RecentGroupEntry> = {}
+    for (const [k, v] of entries.slice(0, RECENT_GROUPS_LIMIT)) trimmed[k] = v
+    saveRecentGroups(trimmed)
+  } else {
+    saveRecentGroups(state)
+  }
+}
+
+function maybeLogUnknownGroup(chatId: string, senderId: string, pushName: string): void {
+  recordUnknownGroup(chatId, senderId, pushName)
+  // Syslog still fires, throttled per minute per group, so users tailing
+  // logs see live activity.
+  const nowMs = Date.now()
+  const lastMs = recentGroupsSyslogLast.get(chatId) ?? 0
+  if (nowMs - lastMs < 60_000) return
+  recentGroupsSyslogLast.set(chatId, nowMs)
   syslog(`unknown group dropped a message: ${chatId}${pushName ? ` (sender push name: ${pushName})` : ''} — allow with /whatsapp:access add-group ${chatId}`)
 }
 
@@ -1521,6 +1590,18 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
       },
     },
     {
+      name: 'list_group_senders',
+      description: 'List the participants who have spoken in a group, drawn from the local message store. Useful for picking which member JID to whitelist when restricting a group to specific people via /whatsapp:access group-allow. Returns sender JID, last-seen push name, message count, and last-seen timestamp, sorted by recency.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          chat_id: { type: 'string', description: 'JID of the chat (group or DM)' },
+          since_days: { type: 'number', description: 'Optional lookback window in days. Default: all-time.' },
+        },
+        required: ['chat_id'],
+      },
+    },
+    {
       name: 'export_chat',
       description: 'Export the local store of a chat to a file under the inbox directory. Returns the file path. Useful for "summarize this chat", "give me a transcript", or for handing off to other tools.',
       inputSchema: {
@@ -1850,6 +1931,26 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       }
       logConversation('out', 'Claude', `[Poll] ${question}: ${values.join(', ')}`, { chat_id })
       return { content: [{ type: 'text', text: `Sent poll "${question}" with ${values.length} options${multi_select ? ' (multi-select)' : ''}` }] }
+    }
+
+    case 'list_group_senders': {
+      if (!isDbReady()) {
+        return { content: [{ type: 'text', text: 'Local message store not available — sender list unavailable.' }] }
+      }
+      const chat_id = (args as any).chat_id as string
+      const since_days = (args as any).since_days as number | undefined
+      if (!chat_id) throw new Error('chat_id is required')
+      const since_ts = since_days ? Math.floor(Date.now() / 1000) - since_days * 86400 : undefined
+      const senders = getChatSenders(chat_id, since_ts)
+      if (senders.length === 0) {
+        return { content: [{ type: 'text', text: `No senders indexed for ${chat_id}${since_days ? ` in the last ${since_days} day(s)` : ''}.` }] }
+      }
+      const formatted = senders.map((s) => {
+        const when = new Date(s.last_seen_ts * 1000).toISOString()
+        const name = s.push_name ?? '(no push name)'
+        return `• ${name} — \`${s.sender_id}\` — ${s.message_count} message${s.message_count === 1 ? '' : 's'}, last at ${when}`
+      }).join('\n')
+      return { content: [{ type: 'text', text: `${senders.length} sender${senders.length === 1 ? '' : 's'} in ${chat_id}:\n\n${formatted}` }] }
     }
 
     case 'export_chat': {

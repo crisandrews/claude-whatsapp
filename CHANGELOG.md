@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.9.0
+
+### Changes
+
+- Group discovery: unknown groups that drop a message are now persisted to `recent-groups.json` and listed inline by `/whatsapp:access` with a copy-paste `add-group` command and the most recent sender's push name, so finding a group's JID stops requiring tailing the system log.
+- Group whitelist: new `/whatsapp:access group-allow <group-jid> <member-jid>` and `group-revoke <group-jid> <member-jid>` commands restrict a group to specific people in it (or open it back up), so a busy group can route only one or two members' messages to Claude without writing JSON by hand.
+- Member discovery: new `list_group_senders` tool reports the participants who have spoken in a chat — push names, JIDs, message counts, last seen — drawn from the local message store, so picking which member to whitelist becomes a question the user asks Claude in plain English.
+- Group access docs: README rewritten around a four-policy matrix (open / mention-only / restricted-mention-only / restricted-open) and states up front that group access is independent of DM access — allowing someone in a group does NOT let them DM the bot, and pairing for DM does NOT auto-allow them in any group.
+
 ## v1.8.1
 
 ### Changes
