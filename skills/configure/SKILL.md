@@ -6,6 +6,11 @@ allowed-tools:
   - Bash(ls *)
   - Bash(mkdir *)
   - Bash(rm *)
+  - Bash(mv *)
+  - Bash(cp *)
+  - Bash(chmod *)
+  - Bash(date *)
+  - Bash(test *)
   - Bash(open *)
   - Bash(sleep *)
   - Bash(cat *)
@@ -81,6 +86,27 @@ For headless servers (no screen, no camera). Generates an 8-character code that 
 
    If the channel is already running, run /whatsapp:configure reset to force a fresh link cycle. Then run /whatsapp:configure to see the code.
    ```
+
+### `import <source-dir>` — migrate WhatsApp session from another Baileys-based app
+
+Copy existing credentials from another local install (OpenClaw, wppconnect, a previous claude-whatsapp checkout, etc.) so the user doesn't have to scan a fresh QR or re-pair the device.
+
+1. Verify `<source-dir>` is an absolute or expandable path that exists and contains a `creds.json` file. If `creds.json` is missing, fail with: "Source must be a directory in Baileys multi-file auth format (creds.json + key files)." Do NOT touch the existing auth dir.
+2. Find `STATE_DIR` as in the no-args flow.
+3. Back up the existing auth directory: `mv $STATE_DIR/auth $STATE_DIR/auth.backup-$(date +%s)`. Recreate the empty target: `mkdir -p $STATE_DIR/auth`.
+4. Copy every `.json` file from `<source-dir>` into `$STATE_DIR/auth/`: `cp <source-dir>/*.json $STATE_DIR/auth/`.
+5. Lock down perms: `chmod 700 $STATE_DIR/auth && chmod 600 $STATE_DIR/auth/*.json`.
+6. Tell the user:
+   ```
+   Auth imported from <source-dir>. Previous session backed up to $STATE_DIR/auth.backup-<ts>.
+
+   Run /reload-plugins to reconnect with the imported credentials.
+
+   If the import was wrong, restore with:
+     rm -rf $STATE_DIR/auth && mv $STATE_DIR/auth.backup-<ts> $STATE_DIR/auth
+   ```
+
+**Important:** Importing creds that are also in active use elsewhere (i.e. another running Baileys instance using the same files) will cause both sides to fight for the WhatsApp session. Make sure the source app is stopped before importing.
 
 ### `pair off` — disable pairing-code mode (return to QR scanning)
 

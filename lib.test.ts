@@ -11,6 +11,8 @@ import {
   tryCreateLockFile,
   unlinkIfExists,
   chunk,
+  tryExtractJsonField,
+  summarizePermissionInput,
 } from './lib.js'
 
 // ---------------------------------------------------------------------------
@@ -137,6 +139,79 @@ test('parsePermissionReply — wrong length rejected', () => {
   assert.equal(parsePermissionReply('yes abcd'), null) // 4 chars
   assert.equal(parsePermissionReply('yes abcdef'), null) // 6 chars
   assert.equal(parsePermissionReply('yes abc'), null) // 3 chars
+})
+
+// ---------------------------------------------------------------------------
+// tryExtractJsonField
+// ---------------------------------------------------------------------------
+test('tryExtractJsonField — well-formed JSON', () => {
+  assert.equal(tryExtractJsonField('{"command":"ls -la"}', 'command'), 'ls -la')
+  assert.equal(tryExtractJsonField('{"file_path":"/tmp/x.ts","old_string":"a"}', 'file_path'), '/tmp/x.ts')
+})
+
+test('tryExtractJsonField — missing field returns null', () => {
+  assert.equal(tryExtractJsonField('{"command":"ls"}', 'file_path'), null)
+})
+
+test('tryExtractJsonField — non-string field returns null', () => {
+  assert.equal(tryExtractJsonField('{"count":3}', 'count'), null)
+})
+
+test('tryExtractJsonField — truncated JSON falls back to regex', () => {
+  // Simulates CC's input_preview truncated to 200 chars + '…'
+  const truncated = '{"file_path":"/Users/me/project/src/long-file.ts","old_string":"const x = 1\\nconst y = 2","new_string":"const x = 42\\nconst…'
+  assert.equal(tryExtractJsonField(truncated, 'file_path'), '/Users/me/project/src/long-file.ts')
+})
+
+test('tryExtractJsonField — regex handles escaped quotes', () => {
+  const truncated = '{"command":"echo \\"hello\\""'
+  assert.equal(tryExtractJsonField(truncated, 'command'), 'echo "hello"')
+})
+
+test('tryExtractJsonField — empty/null inputs return null', () => {
+  assert.equal(tryExtractJsonField('', 'x'), null)
+  assert.equal(tryExtractJsonField('not json at all', 'x'), null)
+})
+
+// ---------------------------------------------------------------------------
+// summarizePermissionInput
+// ---------------------------------------------------------------------------
+test('summarizePermissionInput — Bash extracts command', () => {
+  const out = summarizePermissionInput('Bash', '{"command":"ls -la"}')
+  assert.equal(out.codeBlock, 'ls -la')
+  assert.equal(out.highlight, undefined)
+})
+
+test('summarizePermissionInput — Edit highlights file_path + keeps preview', () => {
+  const out = summarizePermissionInput('Edit', '{"file_path":"/tmp/x.ts","old_string":"a"}')
+  assert.equal(out.highlight, '📄 /tmp/x.ts')
+  assert.ok(out.codeBlock?.includes('file_path'))
+})
+
+test('summarizePermissionInput — Read highlights file with no code block', () => {
+  const out = summarizePermissionInput('Read', '{"file_path":"/tmp/x.ts"}')
+  assert.equal(out.highlight, '👁 /tmp/x.ts')
+  assert.equal(out.codeBlock, undefined)
+})
+
+test('summarizePermissionInput — WebFetch highlights URL', () => {
+  const out = summarizePermissionInput('WebFetch', '{"url":"https://example.com/page"}')
+  assert.equal(out.highlight, '🌐 https://example.com/page')
+})
+
+test('summarizePermissionInput — WebSearch highlights query', () => {
+  const out = summarizePermissionInput('WebSearch', '{"query":"baileys docs"}')
+  assert.equal(out.highlight, '🔍 baileys docs')
+})
+
+test('summarizePermissionInput — unknown tool falls back to code block', () => {
+  const out = summarizePermissionInput('SomeNewTool', '{"x":1}')
+  assert.equal(out.codeBlock, '{"x":1}')
+  assert.equal(out.highlight, undefined)
+})
+
+test('summarizePermissionInput — empty preview returns empty', () => {
+  assert.deepEqual(summarizePermissionInput('Bash', ''), {})
 })
 
 // ---------------------------------------------------------------------------

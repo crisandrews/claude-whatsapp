@@ -1,5 +1,18 @@
 # Changelog
 
+## v1.6.0
+
+### Security
+
+- `auth/` directory and credential files re-tightened to `0700`/`0600` on every server start, not just when the directory is first created. Previous installations whose umask left `0755` on `auth/` are corrected on the next boot. Baileys' `creds.update` events now run a chmod sweep on the auth files after each save, so newly written keys can't drift back to looser perms.
+- Status, config, and PID files now persisted with explicit `mode: 0o600`.
+
+### Changes
+
+- LID↔phone resolution cache for cross-namespace mention gating. Baileys 7 addresses many group messages in `@lid` mode and carries the phone equivalent in `key.remoteJidAlt` / `key.participantAlt`; we record those mappings (bounded LRU, 1000 entries) so a later mention written in `@lid` form against a bot whose captured identity is `@s.whatsapp.net` still resolves correctly. Resolves false negatives in mention-required groups when the same physical user appears in both namespaces.
+- `/whatsapp:configure import <source-dir>` skill command. Migrates an existing Baileys multi-file auth state from another local install (OpenClaw, wppconnect, prior checkout) into this plugin's auth dir. Backs up the previous session, copies the new files, re-tightens perms. User runs `/reload-plugins` to reconnect with imported credentials. No re-pairing required.
+- Permission relay prompts now extract a tool-specific highlight from the request's `input_preview`. Bash shows the command in a code block; Edit/Write/MultiEdit highlight the file path with 📄; Read shows just the path; WebFetch surfaces the URL with 🌐; WebSearch the query with 🔍. Truncated JSON inputs fall back to a regex over the prefix, so the highlight survives even when CC's 200-char preview cut mid-value.
+
 ## v1.5.0
 
 ### Changes

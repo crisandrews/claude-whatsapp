@@ -105,6 +105,81 @@ export function parsePermissionReply(text: string): PermissionReply | null {
 }
 
 // ---------------------------------------------------------------------------
+// Permission prompt formatting — extract a friendly highlight (file path,
+// URL, command) from the input_preview JSON we receive from Claude Code,
+// so the WhatsApp message reads naturally on mobile instead of dumping a
+// raw JSON blob. Falls back to the code-blocked preview when we don't
+// recognize the tool or the JSON is truncated past the field of interest.
+// ---------------------------------------------------------------------------
+export function tryExtractJsonField(input: string, field: string): string | null {
+  if (!input) return null
+  // First try real JSON. CC may truncate input_preview to ~200 chars + '…',
+  // which breaks JSON.parse — we then fall back to a regex over the prefix.
+  try {
+    const obj = JSON.parse(input)
+    if (obj && typeof obj === 'object' && typeof (obj as any)[field] === 'string') {
+      return (obj as any)[field]
+    }
+  } catch {}
+  // Regex over a possibly-truncated string. Captures escaped quotes/backslashes
+  // properly — we don't want a literal `\"` to terminate the match.
+  const re = new RegExp(`"${field}"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"`)
+  const m = input.match(re)
+  if (!m) return null
+  return m[1].replace(/\\"/g, '"').replace(/\\\\/g, '\\').replace(/\\n/g, '\n')
+}
+
+export interface PermissionInputSummary {
+  /** A short scannable line shown above the code block (e.g. `📄 path/to/file.ts`). */
+  highlight?: string
+  /** The raw preview to render in a triple-backtick block. Omitted when the
+   *  highlight already conveys everything (e.g. a Read tool with just a path). */
+  codeBlock?: string
+}
+
+export function summarizePermissionInput(
+  toolName: string,
+  inputPreview: string,
+): PermissionInputSummary {
+  if (!inputPreview) return {}
+  switch (toolName) {
+    case 'Bash':
+    case 'BashOutput': {
+      const cmd = tryExtractJsonField(inputPreview, 'command')
+      return { codeBlock: cmd ?? inputPreview }
+    }
+    case 'Edit':
+    case 'MultiEdit':
+    case 'Write': {
+      const file = tryExtractJsonField(inputPreview, 'file_path')
+      return file
+        ? { highlight: `📄 ${file}`, codeBlock: inputPreview }
+        : { codeBlock: inputPreview }
+    }
+    case 'NotebookEdit': {
+      const nb = tryExtractJsonField(inputPreview, 'notebook_path')
+      return nb
+        ? { highlight: `📓 ${nb}`, codeBlock: inputPreview }
+        : { codeBlock: inputPreview }
+    }
+    case 'Read': {
+      const file = tryExtractJsonField(inputPreview, 'file_path')
+      return file ? { highlight: `👁 ${file}` } : { codeBlock: inputPreview }
+    }
+    case 'WebFetch': {
+      const url = tryExtractJsonField(inputPreview, 'url')
+      return url ? { highlight: `🌐 ${url}` } : { codeBlock: inputPreview }
+    }
+    case 'WebSearch': {
+      const q = tryExtractJsonField(inputPreview, 'query')
+      return q ? { highlight: `🔍 ${q}` } : { codeBlock: inputPreview }
+    }
+    default:
+      return { codeBlock: inputPreview }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Single-instance lock — atomic create with stale/corrupt recovery
 // ---------------------------------------------------------------------------
 export type LockResult =

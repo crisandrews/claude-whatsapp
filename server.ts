@@ -14,6 +14,7 @@ import {
   parsePermissionReply,
   acquireLock as acquireLockImpl,
   chunk,
+  summarizePermissionInput,
   type ChunkMode,
   type LockResult,
 } from './lib.js'
@@ -100,6 +101,23 @@ const PID_FILE = path.join(CHANNEL_DIR, 'server.pid')
 for (const d of [CHANNEL_DIR, AUTH_DIR, INBOX_DIR, APPROVED_DIR]) {
   fs.mkdirSync(d, { recursive: true, mode: 0o700 })
 }
+
+// Re-tighten perms on startup. mkdirSync's `mode` only applies to NEWLY
+// created dirs, so installations from older versions (where umask may have
+// left 0755) need an explicit chmod. Same for the auth files — Baileys
+// writes them itself and we don't get to set the mode at create time, so
+// we pass over them once on boot. Best-effort: failures are logged but
+// don't block startup.
+function tightenStatePerms(): void {
+  try { fs.chmodSync(AUTH_DIR, 0o700) } catch {}
+  try { fs.chmodSync(CHANNEL_DIR, 0o700) } catch {}
+  try {
+    for (const f of fs.readdirSync(AUTH_DIR)) {
+      try { fs.chmodSync(path.join(AUTH_DIR, f), 0o600) } catch {}
+    }
+  } catch {}
+}
+tightenStatePerms()
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -201,9 +219,22 @@ function assertSendable(filePath: string): void {
 
 // JID helpers (`splitJid`, pure `matchesBot`) live in lib.ts so they can be
 // unit-tested without dragging Baileys into the test runtime. Here we expose
-// a closure that captures the live bot identity for use inside gate().
+// a closure that captures the live bot identity AND the LID↔phone cache to
+// resolve cross-namespace mentions (e.g. someone @-mentioning the bot in a
+// group where the keys are addressed in LID mode but our captured identity
+// is the phone JID).
 function matchesBot(jid: string | null | undefined): boolean {
-  return matchesBotImpl(jid, botJidLocal, botJidNamespace)
+  if (matchesBotImpl(jid, botJidLocal, botJidNamespace)) return true
+  // Cross-namespace fallback: bot is in phone namespace, mention is in LID.
+  // Resolve via cache populated from per-message Alt fields.
+  if (jid && botJidNamespace && botJidNamespace !== 'lid') {
+    const parts = splitJid(jid)
+    if (parts && parts.namespace === 'lid') {
+      const phoneLocal = lidToPhone.get(parts.local)
+      if (phoneLocal && phoneLocal === botJidLocal) return true
+    }
+  }
+  return false
 }
 
 // ---------------------------------------------------------------------------
@@ -498,6 +529,24 @@ let firstConnectAnnounced = false
 // the per-message hot path doesn't re-split.
 let botJidLocal: string | null = null
 let botJidNamespace: string | null = null
+
+// LID↔phone resolution cache. Baileys 7 introduced @lid identifiers (opaque
+// per-conversation IDs unrelated to phone numbers). When a message is
+// addressed in LID mode, the key carries `remoteJidAlt` / `participantAlt`
+// with the phone equivalent — we record those so a later mention written in
+// LID form can still resolve back to the bot's phone identity. Bounded so
+// long-running sessions don't grow without limit.
+const MAX_LID_CACHE = 1000
+const lidToPhone = new Map<string, string>()
+
+function rememberLidMapping(lidLocal: string, phoneLocal: string): void {
+  if (!lidLocal || !phoneLocal) return
+  if (lidToPhone.size >= MAX_LID_CACHE) {
+    const oldest = lidToPhone.keys().next().value
+    if (oldest !== undefined) lidToPhone.delete(oldest)
+  }
+  lidToPhone.set(lidLocal, phoneLocal)
+}
 const QR_IMAGE_PATH = path.join(CHANNEL_DIR, 'qr.png')
 const STATUS_FILE = path.join(CHANNEL_DIR, 'status.json')
 
@@ -509,7 +558,7 @@ const RECONNECT_MAX_DELAY_MS = 5 * 60_000    // cap at 5 min
 const RECONNECT_STABLE_THRESHOLD_MS = 30_000 // counted as "real" if open this long
 
 function writeStatus(status: string, details?: Record<string, any>) {
-  fs.writeFileSync(STATUS_FILE, JSON.stringify({ status, ...details, ts: Date.now() }))
+  fs.writeFileSync(STATUS_FILE, JSON.stringify({ status, ...details, ts: Date.now() }), { mode: 0o600 })
 }
 
 async function connectWhatsApp() {
@@ -555,8 +604,17 @@ async function connectWhatsApp() {
     logger,
   })
 
-  // Save credentials on update
-  sock.ev.on('creds.update', saveCreds)
+  // Save credentials on update — Baileys handles the actual write; we wrap
+  // to re-tighten file perms after every save (creds.json and the per-key
+  // files in AUTH_DIR are session secrets and should stay user-only).
+  sock.ev.on('creds.update', async () => {
+    await saveCreds()
+    try {
+      for (const f of fs.readdirSync(AUTH_DIR)) {
+        try { fs.chmodSync(path.join(AUTH_DIR, f), 0o600) } catch {}
+      }
+    } catch {}
+  })
 
   // Connection state management
   sock.ev.on('connection.update', async (update) => {
@@ -692,6 +750,23 @@ async function connectWhatsApp() {
     for (const msg of messages) {
       if (!msg.message) continue
       if (msg.key.fromMe) continue
+
+      // Capture LID→phone mappings from key.*Alt fields. These are present
+      // on group messages addressed in LID mode and let us later resolve
+      // mentions written in @lid form back to the bot's phone identity.
+      const k: any = msg.key
+      const altPairs: Array<[string | undefined, string | undefined]> = [
+        [k.remoteJid, k.remoteJidAlt],
+        [k.participant, k.participantAlt],
+      ]
+      for (const [lidJid, phoneJid] of altPairs) {
+        if (!lidJid || !phoneJid) continue
+        const lid = splitJid(lidJid)
+        const phone = splitJid(phoneJid)
+        if (!lid || !phone) continue
+        if (lid.namespace !== 'lid' || phone.namespace === 'lid') continue
+        rememberLidMapping(lid.local, phone.local)
+      }
 
       await handleInbound(msg)
     }
@@ -1181,8 +1256,10 @@ async function handlePermissionRequest(params: any): Promise<void> {
     return
   }
 
-  const previewBlock = inputPreview ? `\n\`\`\`\n${inputPreview}\n\`\`\`\n` : ''
-  const message = `🔐 Claude wants to run *${toolName}*\n${description || '_(no description)_'}${previewBlock}\nReply *yes ${requestId}* / *no ${requestId}* or react 👍 / 👎.`
+  const summary = summarizePermissionInput(toolName, inputPreview)
+  const highlightLine = summary.highlight ? `\n${summary.highlight}` : ''
+  const codeBlock = summary.codeBlock ? `\n\`\`\`\n${summary.codeBlock}\n\`\`\`\n` : '\n'
+  const message = `🔐 Claude wants to run *${toolName}*\n${description || '_(no description)_'}${highlightLine}${codeBlock}Reply *yes ${requestId}* / *no ${requestId}* or react 👍 / 👎.`
 
   const sentMessageIds: string[] = []
   for (const target of targets) {
