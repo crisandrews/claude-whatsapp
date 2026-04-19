@@ -10,6 +10,7 @@ import {
   acquireLock,
   tryCreateLockFile,
   unlinkIfExists,
+  chunk,
 } from './lib.js'
 
 // ---------------------------------------------------------------------------
@@ -136,6 +137,68 @@ test('parsePermissionReply — wrong length rejected', () => {
   assert.equal(parsePermissionReply('yes abcd'), null) // 4 chars
   assert.equal(parsePermissionReply('yes abcdef'), null) // 6 chars
   assert.equal(parsePermissionReply('yes abc'), null) // 3 chars
+})
+
+// ---------------------------------------------------------------------------
+// chunk
+// ---------------------------------------------------------------------------
+test('chunk — empty string returns empty array', () => {
+  assert.deepEqual(chunk('', 100, 'length'), [])
+  assert.deepEqual(chunk('', 100, 'newline'), [])
+})
+
+test('chunk — text shorter than limit returns single piece', () => {
+  assert.deepEqual(chunk('hello', 100, 'length'), ['hello'])
+  assert.deepEqual(chunk('hello', 100, 'newline'), ['hello'])
+})
+
+test('chunk — length mode hard-cuts at exact limit', () => {
+  const text = 'abcdefghij' // 10 chars
+  assert.deepEqual(chunk(text, 4, 'length'), ['abcd', 'efgh', 'ij'])
+})
+
+test('chunk — newline mode prefers paragraph break past midpoint', () => {
+  const text = 'first paragraph here\n\nsecond paragraph that is somewhat long'
+  // limit 30: \n\n at position 20, midpoint=15 → 20 >= 15 ✓ honors it
+  const out = chunk(text, 30, 'newline')
+  assert.equal(out[0], 'first paragraph here')
+  assert.ok(out[1].startsWith('second paragraph'))
+})
+
+test('chunk — newline mode falls back to line break when no paragraph past midpoint', () => {
+  const text = 'short\nmedium length line that we want broken at the line break'
+  // limit 25, midpoint=12: \n at position 5 (< 12), falls past
+  // \n is the only newline; 5 < 12, so it goes to space
+  const out = chunk(text, 25, 'newline')
+  // should not break in the middle of a word — must be at last space ≤ 25
+  assert.ok(!out[0].endsWith('len'))
+  assert.ok(out[0].length <= 25)
+})
+
+test('chunk — newline mode falls back to space when no break is past midpoint', () => {
+  const text = 'this is just words with no line breaks at all in the entire string'
+  const out = chunk(text, 25, 'newline')
+  // each chunk should end at a word boundary, not mid-word
+  for (let i = 0; i < out.length - 1; i++) {
+    assert.ok(out[i].length <= 25, `chunk ${i} too long: ${out[i].length}`)
+    assert.ok(!/[a-z]$/i.test(out[i]) || out[i].endsWith(out[i].split(' ').pop() || ''),
+      `chunk ${i} doesn't end on word boundary: "${out[i]}"`)
+  }
+})
+
+test('chunk — newline mode hard-cuts when no soft break available at all', () => {
+  const text = 'a'.repeat(50) // no spaces or newlines
+  const out = chunk(text, 20, 'newline')
+  assert.deepEqual(out, ['a'.repeat(20), 'a'.repeat(20), 'a'.repeat(10)])
+})
+
+test('chunk — strips leading newlines from continuation chunks', () => {
+  const text = 'first chunk content\n\n\n\nsecond chunk content'
+  const out = chunk(text, 20, 'newline')
+  // Continuation should not start with \n
+  for (let i = 1; i < out.length; i++) {
+    assert.ok(!out[i].startsWith('\n'), `chunk ${i} starts with newline: "${out[i].slice(0, 5)}"`)
+  }
 })
 
 // ---------------------------------------------------------------------------

@@ -13,6 +13,8 @@ import {
   matchesBot as matchesBotImpl,
   parsePermissionReply,
   acquireLock as acquireLockImpl,
+  chunk,
+  type ChunkMode,
   type LockResult,
 } from './lib.js'
 
@@ -214,6 +216,16 @@ interface PluginConfig {
   audioLanguage?: string | null
   audioModel?: 'tiny' | 'base' | 'small'   // default: base
   audioQuality?: 'fast' | 'balanced' | 'best' // default: balanced
+
+  // Outbound message shaping (Sprint 1)
+  chunkMode?: ChunkMode                     // default: 'length' (preserves prior behavior)
+  replyToMode?: 'off' | 'first' | 'all'     // default: 'first'
+  ackReaction?: string                      // emoji shown immediately on inbound, e.g. '👀'
+  documentThreshold?: number                // chars; > threshold sends as document. 0 disables, -1 always. default: 0
+  documentFormat?: 'auto' | 'md' | 'txt'    // filename/MIME for auto-document. default: 'auto'
+
+  // Headless linking (Sprint 1)
+  pairingPhone?: string                     // E.164 digits only (no +). When set + not yet paired, request a pairing code instead of waiting for QR scan.
 }
 
 function loadConfig(): PluginConfig {
@@ -554,14 +566,37 @@ async function connectWhatsApp() {
       // Save QR as PNG — the /whatsapp:configure skill opens it for the user
       try {
         await QRCode.toFile(QR_IMAGE_PATH, qr, { width: 512, margin: 2 })
-        writeStatus('qr_ready', { qrPath: QR_IMAGE_PATH })
+
+        // Headless linking: if a phone number is configured AND we're not yet
+        // registered, request a pairing code in parallel with the QR. Pairing
+        // codes expire alongside the QR rotation, so we re-request on each
+        // tick (Baileys: ~20s cadence). The /whatsapp:configure skill reads
+        // pairingCode from status.json and shows it to the user.
+        const cfgPhone = loadConfig().pairingPhone
+        let pairingCode: string | undefined
+        if (cfgPhone && sock && !sock.authState.creds.registered) {
+          try {
+            pairingCode = await sock.requestPairingCode(cfgPhone)
+            syslog(`pairing code generated for +${cfgPhone}: ${pairingCode}`)
+          } catch (err) {
+            syslog(`requestPairingCode failed: ${err}`)
+          }
+        }
+
+        writeStatus('qr_ready', {
+          qrPath: QR_IMAGE_PATH,
+          ...(pairingCode ? { pairingCode, pairingPhone: cfgPhone } : {}),
+        })
 
         // Notify the user to run /whatsapp:configure
         try {
+          const content = pairingCode
+            ? `WhatsApp is ready to link. Tell the user to run /whatsapp:configure — a pairing code has been generated for +${cfgPhone}.`
+            : 'WhatsApp is ready to connect. Tell the user to run /whatsapp:configure to scan the QR code.'
           mcp.notification({
             method: 'notifications/claude/channel',
             params: {
-              content: 'WhatsApp is ready to connect. Tell the user to run /whatsapp:configure to scan the QR code.',
+              content,
               meta: {
                 chat_id: 'system',
                 message_id: 'setup-' + Date.now(),
@@ -681,6 +716,16 @@ async function handleInbound(msg: proto.IWebMessageInfo) {
 
   // Show "typing..." indicator while Claude processes the message
   try { await sock!.sendPresenceUpdate('composing', chatId) } catch {}
+
+  // Optional ack reaction — pre-Claude visual receipt so the user knows
+  // their message was received even before Claude composes a reply.
+  // Configured via /whatsapp:configure ack <emoji>; missing/empty disables.
+  const ackEmoji = loadConfig().ackReaction
+  if (ackEmoji && messageId && sock) {
+    sock.sendMessage(chatId, {
+      react: { text: ackEmoji, key: { remoteJid: chatId, id: messageId, fromMe: false } as any },
+    }).catch(() => {})
+  }
 
   if (result === 'pair') {
     await handlePairing(senderId, chatId)
@@ -1223,6 +1268,19 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
       },
     },
     {
+      name: 'edit_message',
+      description: 'Edit a message you previously sent. WhatsApp shows an "edited" tag and does NOT push a new notification — useful for fixing typos without spamming the user. Only works on messages you (the bot) sent, within WhatsApp\'s ~15-minute edit window.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          chat_id: { type: 'string', description: 'The JID of the chat that contains the message (from meta.chat_id)' },
+          message_id: { type: 'string', description: 'The ID of the message to edit (must be a message the bot sent)' },
+          text: { type: 'string', description: 'The new message text' },
+        },
+        required: ['chat_id', 'message_id', 'text'],
+      },
+    },
+    {
       name: 'download_attachment',
       description: 'Download a media attachment from a received message to local inbox.',
       inputSchema: {
@@ -1296,22 +1354,61 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
         return { content: [{ type: 'text', text: `Sent file: ${path.basename(absPath)}` }] }
       }
 
-      // Auto-chunk text messages
+      const cfg = loadConfig()
       const MAX_LEN = 4096
-      const chunks: string[] = []
-      let remaining = text
-      while (remaining.length > 0) {
-        chunks.push(remaining.slice(0, MAX_LEN))
-        remaining = remaining.slice(MAX_LEN)
-      }
+      const chunkMode: ChunkMode = cfg.chunkMode ?? 'length'
+      const replyToMode = cfg.replyToMode ?? 'first'
+      const docThreshold = cfg.documentThreshold ?? 0
 
       const quoted = reply_to ? { key: { remoteJid: chat_id, id: reply_to, fromMe: false } } : undefined
 
+      // Auto-document: long replies become a single attachment instead of N
+      // chunked text messages. Threshold 0 = disabled, -1 = always, N = trigger
+      // when text exceeds N chars. Requires no file_path passed (otherwise the
+      // caller already chose attachment mode).
+      const sendAsDoc =
+        docThreshold === -1 ||
+        (docThreshold > 0 && text.length > docThreshold)
+      if (sendAsDoc) {
+        const fmt = cfg.documentFormat ?? 'auto'
+        const looksLikeMarkdown =
+          fmt === 'md' ||
+          (fmt === 'auto' && (
+            /^#{1,6} /m.test(text) ||
+            /\*\*[^*]+\*\*/m.test(text) ||
+            /^```/m.test(text) ||
+            /^[-*+] /m.test(text) ||
+            /^\d+\. /m.test(text)
+          ))
+        const filename = looksLikeMarkdown ? 'response.md' : 'response.txt'
+        const mimetype = looksLikeMarkdown ? 'text/markdown' : 'text/plain'
+        const tmpPath = path.join(os.tmpdir(), `wachan-${Date.now()}-${filename}`)
+        fs.writeFileSync(tmpPath, text)
+        try {
+          await sock.sendMessage(
+            chat_id,
+            { document: { url: tmpPath }, mimetype, fileName: filename },
+            { quoted: quoted as any },
+          )
+        } finally {
+          try { fs.unlinkSync(tmpPath) } catch {}
+        }
+        try { await sock.sendPresenceUpdate('paused', chat_id) } catch {}
+        logConversation('out', 'Claude', `[Document: ${filename}] (${text.length} chars)`, { chat_id })
+        return { content: [{ type: 'text', text: `Sent as ${filename} (${text.length} chars)` }] }
+      }
+
+      // Text chunking
+      const chunks = chunk(text, MAX_LEN, chunkMode)
+
       for (let i = 0; i < chunks.length; i++) {
+        const useQuote =
+          replyToMode === 'all' ||
+          (replyToMode === 'first' && i === 0)
         await sock.sendMessage(
           chat_id,
           { text: chunks[i] },
-          { quoted: i === 0 ? (quoted as any) : undefined },
+          { quoted: useQuote ? (quoted as any) : undefined },
         )
       }
 
@@ -1325,7 +1422,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
         content: [
           {
             type: 'text',
-            text: chunks.length > 1 ? `Sent ${chunks.length} messages (auto-chunked)` : 'Message sent',
+            text: chunks.length > 1 ? `Sent ${chunks.length} messages (auto-chunked, ${chunkMode})` : 'Message sent',
           },
         ],
       }
@@ -1342,6 +1439,25 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       })
 
       return { content: [{ type: 'text', text: `Reacted with ${emoji}` }] }
+    }
+
+    case 'edit_message': {
+      if (!sock) throw new Error('WhatsApp is not connected')
+
+      const { chat_id, message_id, text } = args
+      assertAllowedChat(chat_id)
+
+      // The edit envelope reuses sendMessage. We construct the message key with
+      // fromMe: true — WhatsApp will reject the edit server-side if the
+      // referenced message wasn't actually ours, so we don't need to maintain
+      // a sent-history cache for safety.
+      await sock.sendMessage(chat_id, {
+        text,
+        edit: { remoteJid: chat_id, id: message_id, fromMe: true } as any,
+      })
+
+      logConversation('out', 'Claude', `[Edit ${message_id}] ${text}`, { chat_id })
+      return { content: [{ type: 'text', text: `Edited message ${message_id}` }] }
     }
 
     case 'download_attachment': {

@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.5.0
+
+### Changes
+
+- Pairing-code linking for headless setup. `/whatsapp:configure pair <phone>` writes the number into config and the next QR cycle generates an 8-character pairing code (`sock.requestPairingCode`) instead of a scannable QR. Code is stored in `status.json` so the skill can show it; refreshes alongside the QR rotation. Disable with `/whatsapp:configure pair off`. Verified against `@whiskeysockets/baileys` source — only fires when `sock.authState.creds.registered` is false.
+- `edit_message` tool. Lets Claude correct a previously-sent message in place. WhatsApp shows an "edited" tag and skips push notifications, so corrections don't spam the chat. Constructed from `chat_id` + `message_id` + `fromMe: true` — WhatsApp rejects edits server-side for messages that weren't ours, so no sent-history cache is needed.
+- `chunkMode: newline` for long replies. The `length` mode (default, current behavior) hard-cuts at 4096 characters; `newline` looks back from the limit for the nearest paragraph (`\n\n`), then line, then space break, falling back to a hard cut only when nothing usable lies past the half-way point. Configurable via `/whatsapp:configure chunk-mode newline`.
+- `replyToMode` for chunked replies — `off` / `first` (default) / `all`. Controls which chunks include a quote-reply pointer to the original inbound message. Set with `/whatsapp:configure reply-to <mode>`.
+- `ackReaction` (optional emoji acknowledgement). When set, the bot reacts to inbound messages from allowlisted contacts immediately on receipt, before Claude composes a reply. Closes the silence gap between "user sends" and "agent responds". Set with `/whatsapp:configure ack 👀`; clear with `/whatsapp:configure ack off`.
+- Auto-document for long replies. When Claude's reply exceeds `documentThreshold` characters (default 0 = disabled; user-configurable), the plugin sends it as a single `.md`/`.txt` attachment instead of N chunked text messages. Filename and MIME chosen heuristically from content (`auto`) or forced via `documentFormat`. Set with `/whatsapp:configure document threshold 4000` and `/whatsapp:configure document format md`.
+
 ## v1.4.0
 
 ### Fixes

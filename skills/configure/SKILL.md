@@ -42,7 +42,19 @@ This is the main setup flow:
 5. **Based on status:**
    - `deps_missing`: Dependencies are being installed. Tell the user: "Dependencies are installing (~60 seconds). You'll see a notification when done — then run `/reload-plugins` followed by `/whatsapp:configure`."
    - `connected`: Tell the user "WhatsApp is connected and ready! People can message your number and Claude will respond." Then read and show `$STATE_DIR/access.json` if it exists.
-   - `qr_ready`: Check that `$STATE_DIR/qr.png` exists, then open it: `open $STATE_DIR/qr.png` and tell the user:
+   - `qr_ready` **with `pairingCode` field**: Don't open the QR. Tell the user:
+     ```
+     Pairing code ready for +<pairingPhone>:
+
+     **<pairingCode>**
+
+     1. Open WhatsApp on your phone
+     2. Settings > Linked Devices > Link a Device
+     3. Tap "Link with phone number instead" and enter the code above
+
+     Codes refresh every ~20 seconds — re-run /whatsapp:configure if it expires.
+     ```
+   - `qr_ready` **without** `pairingCode` field: Check that `$STATE_DIR/qr.png` exists, then open it: `open $STATE_DIR/qr.png` and tell the user:
      ```
      QR code opened! Scan it now:
      1. Open WhatsApp on your phone
@@ -55,6 +67,25 @@ This is the main setup flow:
    - `qr_error`: Tell user to run `/whatsapp:configure reset` and try again.
    - `logged_out`: Tell user to run `/whatsapp:configure reset`.
    - `reconnecting`: Tell the user "Server is reconnecting to WhatsApp... this is normal after an update. Run `/reload-plugins` once more, then `/whatsapp:configure`. Do NOT run reset — your session is safe."
+
+### `pair <phone>` — link via pairing code (no QR needed)
+
+For headless servers (no screen, no camera). Generates an 8-character code that the user types into WhatsApp instead of scanning a QR.
+
+1. Strip leading `+` and any non-digit characters from `<phone>`. WhatsApp expects E.164 digits only (e.g. `15551234567`, not `+1 (555) 123-4567`).
+2. Find `STATE_DIR` as in the no-args flow.
+3. Read `$STATE_DIR/config.json` (or `{}` if missing), set `pairingPhone` to the cleaned number, write it back.
+4. Tell the user:
+   ```
+   Pairing phone set to +<phone>. The next QR cycle will generate an 8-character pairing code instead.
+
+   If the channel is already running, run /whatsapp:configure reset to force a fresh link cycle. Then run /whatsapp:configure to see the code.
+   ```
+
+### `pair off` — disable pairing-code mode (return to QR scanning)
+
+1. Find `STATE_DIR`, read `$STATE_DIR/config.json`, delete the `pairingPhone` key, write it back.
+2. Tell the user: "Pairing-code mode disabled. The next QR cycle will produce a scannable code as usual."
 
 ### `reset` — clear session
 
@@ -102,6 +133,46 @@ Then apply the choice: read `$STATE_DIR/config.json`, set `audioModel` to the va
 
 Then apply the choice: read `$STATE_DIR/config.json`, set `audioQuality` to the value, write it back.
 
+### `chunk-mode [length|newline]` — how long replies are split
+
+WhatsApp messages are capped at 4096 chars. When Claude's reply exceeds that, the plugin splits it into multiple messages.
+
+- `length`: hard cut at exactly 4096 chars (default; preserves prior behavior)
+- `newline`: prefer paragraph (`\n\n`), then line, then space breaks past the half-way point of each chunk; falls back to hard cut only when no soft break is available
+
+Read `$STATE_DIR/config.json`, set `chunkMode` to the value, write it back.
+
+### `reply-to [off|first|all]` — quote-reply behavior on chunked replies
+
+When Claude responds, WhatsApp can show a "quoted reply" pointer to the user's original message. Controls which chunks include that pointer:
+
+- `off`: never quote
+- `first`: only the first chunk quotes (default)
+- `all`: every chunk quotes the original
+
+Read `$STATE_DIR/config.json`, set `replyToMode` to the value, write it back.
+
+### `ack [emoji]` — auto-react to inbound messages
+
+When set, the bot reacts with the given emoji as soon as a message is received from an allowlisted contact, before Claude finishes composing a reply. Resolves the silence between "user sends a message" and "Claude responds".
+
+- `ack 👀` — set to that emoji
+- `ack off` — clear the setting
+
+Read `$STATE_DIR/config.json`, set `ackReaction` to the emoji (or delete the key for `off`), write it back.
+
+### `document [threshold N | format md|txt|auto | off]` — auto-document long replies
+
+When Claude's reply exceeds `threshold` characters, send it as a single `.md`/`.txt` attachment instead of N chunked messages. Useful for long analyses, code reviews, or summaries that scroll forever as text.
+
+- `document threshold 4000` — set the trigger threshold
+- `document threshold off` (or `0`) — disable; revert to chunked text
+- `document threshold always` (or `-1`) — always send as document, regardless of length
+- `document format auto` — pick `.md` if the text looks like markdown, else `.txt` (default)
+- `document format md` / `txt` — force one format
+
+Read `$STATE_DIR/config.json`, update `documentThreshold` and/or `documentFormat`, write it back.
+
 ### `audio off` — disable voice transcription
 
 1. Find `STATE_DIR` as above, read `$STATE_DIR/config.json`, set `audioTranscription` to `false`, write it back.
@@ -110,9 +181,9 @@ Then apply the choice: read `$STATE_DIR/config.json`, set `audioQuality` to the 
 ### `status` — check connection only
 
 Find `STATE_DIR` as above, then:
-1. Read `$STATE_DIR/status.json` and report the connection state.
+1. Read `$STATE_DIR/status.json` and report the connection state. If `pairingPhone` is set in config, mention pairing-code mode is active.
 2. Read `$STATE_DIR/access.json` if it exists — show DM policy and allowed users count.
-3. Read `$STATE_DIR/config.json` if it exists — report if audio transcription is enabled and language.
+3. Read `$STATE_DIR/config.json` if it exists — report audio transcription state, `chunkMode`, `replyToMode`, `ackReaction`, `documentThreshold`/`documentFormat` if set.
 4. Read `$STATE_DIR/transcriber-status.json` if it exists — report transcriber state (loading/ready/error/disabled).
 
 ## Important

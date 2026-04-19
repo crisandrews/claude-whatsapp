@@ -41,6 +41,41 @@ export function matchesBot(
 }
 
 // ---------------------------------------------------------------------------
+// Message chunking — splits a long reply into <= `limit` sized pieces.
+// `length` mode is a hard cut at exactly `limit`; `newline` mode looks
+// backwards from `limit` for the nearest paragraph break (\n\n), then a
+// line break (\n), then a space, falling back to a hard cut only if
+// nothing usable lies past the half-way point. Leading newlines on each
+// continuation chunk are stripped so the seam reads naturally.
+// ---------------------------------------------------------------------------
+export type ChunkMode = 'length' | 'newline'
+
+export function chunk(text: string, limit: number, mode: ChunkMode): string[] {
+  if (text.length <= limit) return text.length ? [text] : []
+  const pieces: string[] = []
+  let rest = text
+  while (rest.length > limit) {
+    let cut = limit
+    if (mode === 'newline') {
+      const half = Math.floor(limit / 2)
+      const para = rest.lastIndexOf('\n\n', limit)
+      const line = rest.lastIndexOf('\n', limit)
+      const space = rest.lastIndexOf(' ', limit)
+      // Only honor a soft break if it lies past the half-way point — otherwise
+      // we'd produce a tiny chunk followed by a near-full chunk, which is
+      // worse UX than just hard-cutting.
+      if (para >= half) cut = para
+      else if (line >= half) cut = line
+      else if (space > 0) cut = space
+    }
+    pieces.push(rest.slice(0, cut))
+    rest = rest.slice(cut).replace(/^\n+/, '')
+  }
+  if (rest.length) pieces.push(rest)
+  return pieces
+}
+
+// ---------------------------------------------------------------------------
 // Permission relay — pure parser
 // ---------------------------------------------------------------------------
 // Spec: 5 letters from `a-z` minus `l` (looks like 1/I in many fonts).
