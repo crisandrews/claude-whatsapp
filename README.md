@@ -133,6 +133,8 @@ Default policy is `pairing`. IDs are WhatsApp JIDs — format depends on your Ba
 | `reply` | Send text or files. Auto-chunks long text at 4096 chars (configurable). Max 50 MB per file. |
 | `react` | Emoji reaction on a message. |
 | `edit_message` | Rewrite a previously sent message in place — no push notification, just an "edited" tag. WhatsApp's ~15-minute edit window applies. |
+| `delete_message` | Revoke a message Claude sent. Both sides see the standard "This message was deleted" placeholder. |
+| `send_poll` | Send a tappable poll with 2-12 options. Single-choice by default, optional multi-select. |
 | `download_attachment` | Access downloaded media from the inbox. |
 | `search_messages` | Full-text search the local message store. Supports `word*`, `"exact phrase"`, `NEAR(a b, 5)`, `-excluded`. Optionally scoped to a chat. |
 | `fetch_history` | Ask WhatsApp to ship older messages for a chat. Anchor is the oldest known message; backfilled messages arrive in the background and are indexed automatically. |

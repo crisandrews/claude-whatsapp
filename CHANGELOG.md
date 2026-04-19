@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.8.0
+
+### Changes
+
+- Delete/messages: new `delete_message` tool revokes a message the bot sent, so Claude can take back a wrong reply instead of patching it with a follow-up correction.
+- Polls/groups: new `send_poll` tool delivers a tappable poll with 2-12 options (single-choice or multi-select), so quick group decisions stop needing free-text answers and manual tallying.
+
 ## v1.7.0
 
 ### Changes

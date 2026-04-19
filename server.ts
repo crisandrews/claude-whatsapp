@@ -684,7 +684,7 @@ async function connectWhatsApp() {
     }
 
     if (connection === 'close') {
-      const statusCode = (lastDisconnect?.error as Boom)?.output?.statusCode
+      const statusCode = (lastDisconnect?.error as any)?.output?.statusCode
       const shouldReconnect = statusCode !== DisconnectReason.loggedOut
 
       if (shouldReconnect) {
@@ -1430,6 +1430,39 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
       },
     },
     {
+      name: 'delete_message',
+      description: 'Delete a message you previously sent in a chat. Removes it for everyone (revoke) — both sides see the standard "This message was deleted" placeholder. Only works on messages the bot sent, within WhatsApp\'s revoke window.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          chat_id: { type: 'string', description: 'The JID of the chat that contains the message (from meta.chat_id)' },
+          message_id: { type: 'string', description: 'The ID of the message to delete (must be one the bot sent)' },
+        },
+        required: ['chat_id', 'message_id'],
+      },
+    },
+    {
+      name: 'send_poll',
+      description: 'Send a poll to a chat. WhatsApp displays a tappable list with live tallies. Useful in groups for quick votes ("which day works?", "which option do you prefer?"). 2 to 12 options.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          chat_id: { type: 'string', description: 'The JID of the chat to send the poll to' },
+          question: { type: 'string', description: 'Poll title shown above the options' },
+          options: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Answer options, 2 to 12 strings',
+          },
+          multi_select: {
+            type: 'boolean',
+            description: 'Allow multiple selections per voter (default false = single-choice)',
+          },
+        },
+        required: ['chat_id', 'question', 'options'],
+      },
+    },
+    {
       name: 'download_attachment',
       description: 'Download a media attachment from a received message to local inbox.',
       inputSchema: {
@@ -1749,6 +1782,57 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       }
     }
 
+    case 'delete_message': {
+      if (!sock) throw new Error('WhatsApp is not connected')
+      const { chat_id, message_id } = args
+      assertAllowedChat(chat_id)
+      // Revoke envelope: WhatsApp will reject server-side if the referenced
+      // message wasn't actually ours, so we don't need a sent-history cache.
+      await sock.sendMessage(chat_id, {
+        delete: { remoteJid: chat_id, id: message_id, fromMe: true } as any,
+      })
+      logConversation('out', 'Claude', `[Delete ${message_id}]`, { chat_id })
+      return { content: [{ type: 'text', text: `Deleted message ${message_id} for everyone` }] }
+    }
+
+    case 'send_poll': {
+      if (!sock) throw new Error('WhatsApp is not connected')
+      const chat_id = (args as any).chat_id as string
+      const question = (args as any).question as string
+      const options = (args as any).options as unknown
+      const multi_select = (args as any).multi_select === true
+      assertAllowedChat(chat_id)
+      if (!question || typeof question !== 'string') throw new Error('question is required')
+      if (!Array.isArray(options) || options.length < 2 || options.length > 12) {
+        throw new Error('options must be an array of 2 to 12 strings')
+      }
+      const values = options.map((o, i) => {
+        if (typeof o !== 'string' || !o.trim()) throw new Error(`option ${i} must be a non-empty string`)
+        return o
+      })
+      const sent: any = await sock.sendMessage(chat_id, {
+        poll: {
+          name: question,
+          values,
+          selectableCount: multi_select ? values.length : 1,
+        } as any,
+      })
+      if (sent?.key?.id) {
+        indexMessage({
+          id: sent.key.id,
+          chat_id,
+          sender_id: botJidLocal && botJidNamespace ? `${botJidLocal}@${botJidNamespace}` : null,
+          push_name: 'Claude',
+          ts: Math.floor(Date.now() / 1000),
+          direction: 'out',
+          text: `[Poll] ${question}\n${values.map((v, i) => `${i + 1}. ${v}`).join('\n')}`,
+          meta: { kind: 'poll', selectable_count: String(multi_select ? values.length : 1) },
+        })
+      }
+      logConversation('out', 'Claude', `[Poll] ${question}: ${values.join(', ')}`, { chat_id })
+      return { content: [{ type: 'text', text: `Sent poll "${question}" with ${values.length} options${multi_select ? ' (multi-select)' : ''}` }] }
+    }
+
     case 'export_chat': {
       if (!isDbReady()) {
         return { content: [{ type: 'text', text: 'Local message store not available — export disabled.' }] }
@@ -1805,12 +1889,13 @@ process.on('SIGINT', shutdown)
 // exits and we get reparented (to launchd/init on Unix), so it's a bulletproof
 // signal of "Claude Code died, time to clean up".
 const ORIGINAL_PPID = process.ppid
-setInterval(() => {
+const ppidWatchdog: any = setInterval(() => {
   if (process.ppid !== ORIGINAL_PPID) {
     syslog(`parent process exited (ppid ${ORIGINAL_PPID} → ${process.ppid}), shutting down`)
     shutdown()
   }
-}, 5000).unref()
+}, 5000)
+if (typeof ppidWatchdog?.unref === 'function') ppidWatchdog.unref()
 
 // ---------------------------------------------------------------------------
 // Start

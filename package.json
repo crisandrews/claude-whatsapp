@@ -1,6 +1,6 @@
 {
   "name": "claude-whatsapp-channel",
-  "version": "1.7.0",
+  "version": "1.8.0",
   "author": "crisandrews",
   "private": true,
   "type": "module",

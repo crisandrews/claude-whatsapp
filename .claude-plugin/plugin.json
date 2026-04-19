@@ -1,7 +1,7 @@
 {
   "name": "whatsapp",
   "description": "WhatsApp channel for Claude Code — messaging bridge via QR code with built-in access control.",
-  "version": "1.7.0",
+  "version": "1.8.0",
   "author": {
     "name": "crisandrews",
     "url": "https://github.com/crisandrews"
