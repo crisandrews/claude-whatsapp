@@ -29,11 +29,13 @@ This plugin fills that gap. It connects your WhatsApp number directly to Claude 
 
 ## [Highlights](#highlights)
 
-- **[Native WhatsApp channel](#quick-setup)** — scan a QR, pair your contacts, start chatting with Claude.
-- **[Access control](#access-control)** — pairing codes, allowlist, group gating. Nobody talks to your agent without permission.
+- **[Native WhatsApp channel](#quick-setup)** — scan a QR (or use a pairing code on headless servers), pair your contacts, start chatting with Claude.
+- **[Access control](#access-control)** — pairing codes, allowlist, group gating with `requireMention`. Nobody talks to your agent without permission.
+- **[Permission relay](#permission-requests-over-whatsapp)** — when Claude wants to run a tool, get the prompt on WhatsApp; approve or deny with a 👍 reaction or `yes <id>` reply.
+- **[Local search and export](#search-history-and-export)** — every message indexed locally; full-text search, request older messages from WhatsApp, dump chats to markdown / jsonl / csv.
 - **[Voice transcription](#voice-transcription-optional)** — local Whisper, no API keys, 12+ languages.
 - **[Media pipeline](#media)** — inbound images, audio, video, and documents auto-downloaded for Claude to read.
-- **[Reactions as commands](#reactions)** — 👍 / 👎 on any message become `proceed` / `cancel` signals.
+- **[Reply shaping](#reply-shaping)** — paragraph-aware chunking, optional ack reaction, auto-document for long replies, message editing without push notifications.
 - **[Autonomous mode + web browsing](#autonomous-mode--web-browsing)** — combine with `--chrome` for a fully agentic WhatsApp assistant.
 - **[Always-on](#always-on-run-as-a-background-service)** — launchd, systemd, or Task Scheduler recipes included.
 - **[Multiple agents](#multiple-agents)** — run separate numbers from separate folders, each isolated.
@@ -79,7 +81,7 @@ claude --dangerously-load-development-channels plugin:whatsapp@claude-whatsapp -
 
 > `--dangerously-skip-permissions` lets the agent run without asking for confirmation on every action — recommended for a smooth experience. First launch installs dependencies in the background (~60-90s). Subsequent launches are instant.
 
-**4. Scan the QR code.**
+**4. Link your number.**
 
 ```
 /whatsapp:configure
@@ -87,7 +89,9 @@ claude --dangerously-load-development-channels plugin:whatsapp@claude-whatsapp -
 
 Opens a QR code on your screen. Scan it with WhatsApp > **Settings > Linked Devices > Link a Device**.
 
-Session is saved — you won't need to scan again unless you log out.
+> **Headless server / no camera?** Run `/whatsapp:configure pair +5491155556666` first. The next link cycle generates an 8-character code instead of a QR — read it from the terminal, then on your phone open WhatsApp > **Linked Devices > Link with phone number** and type it in.
+
+Session is saved — you won't need to link again unless you log out.
 
 **5. Pair.**
 
@@ -126,9 +130,13 @@ Default policy is `pairing`. IDs are WhatsApp JIDs — format depends on your Ba
 
 | Tool | Purpose |
 | --- | --- |
-| `reply` | Send text or files. Auto-chunks at 4096 chars. Max 50 MB per file. |
+| `reply` | Send text or files. Auto-chunks long text at 4096 chars (configurable). Max 50 MB per file. |
 | `react` | Emoji reaction on a message. |
+| `edit_message` | Rewrite a previously sent message in place — no push notification, just an "edited" tag. WhatsApp's ~15-minute edit window applies. |
 | `download_attachment` | Access downloaded media from the inbox. |
+| `search_messages` | Full-text search the local message store. Supports `word*`, `"exact phrase"`, `NEAR(a b, 5)`, `-excluded`. Optionally scoped to a chat. |
+| `fetch_history` | Ask WhatsApp to ship older messages for a chat. Anchor is the oldest known message; backfilled messages arrive in the background and are indexed automatically. |
+| `export_chat` | Dump a chat from the local store as `markdown`, `jsonl`, or `csv` under the inbox directory. Optional `since_ts` / `until_ts` window. |
 
 ### [Reactions](#reactions)
 
@@ -153,14 +161,42 @@ When Claude Code asks to run a tool (e.g. a Bash command), the plugin broadcasts
 🔐 Claude wants to run *Bash*
 ls -la /tmp
 
-Reply *yes ABC23* / *no ABC23* or react 👍 / 👎.
+Reply *yes abcde* / *no abcde* or react 👍 / 👎.
 ```
 
 You can respond from your phone in two ways:
-- **Reply with text**: `yes <id>` to allow, `no <id>` to deny. Letters and digits accepted.
-- **React to the message**: 👍/✅ to allow, 👎/❌ to deny.
+- **Reply with text**: `yes <id>` to allow, `no <id>` to deny. Case-insensitive — mobile autocaps work.
+- **React to the message**: 👍 / ✅ to allow, 👎 / ❌ to deny.
 
-Whoever responds first wins. The terminal prompt remains active as a fallback.
+Whoever responds first wins. The terminal prompt remains active as a fallback. Pending requests expire after 5 minutes.
+
+Tool prompts highlight the most relevant part of the request: **Bash** shows the command, **Edit / Write / MultiEdit** show the file with 📄, **Read** shows the path with 👁, **WebFetch** the URL with 🌐, **WebSearch** the query with 🔍.
+
+### [Search, history, and export](#search-history-and-export)
+
+Every inbound and outbound message — including reactions, edits, file captions, and history backfills — is indexed locally in `<channel-dir>/messages.db`. Three tools sit on top:
+
+| Tool | What it does |
+| --- | --- |
+| `search_messages` | Full-text search with snippets. Optionally scope to one chat. |
+| `fetch_history` | Pull older messages for a chat from WhatsApp. Indexed automatically as they arrive. |
+| `export_chat` | Write the chat to `markdown` / `jsonl` / `csv` under the inbox. |
+
+The store is local-only, created with user-only file permissions. Safe to delete to wipe history; it'll be recreated on next launch.
+
+### [Reply shaping](#reply-shaping)
+
+Several knobs control how Claude's outbound messages look on WhatsApp. All set via `/whatsapp:configure`:
+
+| Command | Effect |
+| --- | --- |
+| `chunk-mode newline` | Split long replies at the nearest paragraph / line / space instead of cutting at 4096 chars |
+| `reply-to first` (default) / `all` / `off` | Which chunks of a long reply quote the user's original message |
+| `ack 👀` | React with this emoji as soon as a message arrives, before Claude composes a reply |
+| `ack off` | Disable the ack reaction |
+| `document threshold 4000` | Send replies above N chars as a single `.md` / `.txt` attachment instead of many chunked messages |
+| `document threshold off` | Always chunk, never auto-document |
+| `document format md` / `txt` / `auto` | Force the auto-document filename / MIME (default `auto` picks based on content) |
 
 ### [Media](#media)
 
