@@ -4,49 +4,50 @@
 
 ### Changes
 
-- Local message store backed by SQLite (`better-sqlite3`) with FTS5 full-text indexing. Every inbound and outbound message the plugin sees is indexed automatically into `<channel-dir>/messages.db`; reactions, edits, file captions, and history-backfilled messages are all included. Three new MCP tools sit on top:
-  - `search_messages({query, chat_id?, limit?})` — FTS5 query with snippet, optionally scoped to a chat.
-  - `fetch_history({chat_id, count?})` — calls `sock.fetchMessageHistory` with the oldest known message in the chat as the anchor; backfilled messages arrive asynchronously via `messaging-history.set` and are indexed automatically.
-  - `export_chat({chat_id, format, since_ts?, until_ts?, limit?})` — writes a chronological export of the indexed rows to a file in the inbox dir. Formats: `markdown` (default), `jsonl`, `csv`.
-- DB file is created with `0600` perms; WAL journaling for concurrent reads while the channel keeps writing.
-- `messaging-history.set` handler indexes historical messages without running them through the gate (they're historical) or downloading their media (text/caption only).
-- Each indexed outbound row carries direction `out`, sender JID, and a `Claude` push name so exports render with two clear voices and FTS results disambiguate who said what.
+- Search/messages: `search_messages` tool runs full-text search over every message the plugin has seen, optionally scoped to one chat, so Claude can answer "find where Juan sent the address" without re-reading the whole conversation.
+- History/backfill: `fetch_history` tool asks WhatsApp to ship older messages for a chat using the oldest known message as the anchor, so questions about yesterday's conversation stop requiring you to paste context.
+- Export/chat: `export_chat` tool dumps a chat to `markdown` (default), `jsonl`, or `csv` under the inbox directory, so transcripts can be handed off, summarized, or archived.
+- Local store: every inbound and outbound message — including reactions, edits, file captions, and backfilled history — is now indexed locally to `<channel-dir>/messages.db`, so search, history, and export results stay available across restarts.
+- Local store: indexed outbound rows carry a `Claude` author label, so exports and search snippets disambiguate who said what.
+
+### Security
+
+- Local store: `messages.db` is created with `0600` perms, so the on-disk message archive stays readable only by your user.
 
 ## v1.6.0
 
 ### Security
 
-- `auth/` directory and credential files re-tightened to `0700`/`0600` on every server start, not just when the directory is first created. Previous installations whose umask left `0755` on `auth/` are corrected on the next boot. Baileys' `creds.update` events now run a chmod sweep on the auth files after each save, so newly written keys can't drift back to looser perms.
-- Status, config, and PID files now persisted with explicit `mode: 0o600`.
+- Auth/perms: the auth directory and credential files are re-tightened to `0700` / `0600` on every server start and after every credential save, so installations that started under a permissive umask converge to user-only access without manual chmod.
+- State files: status, config, and PID files are now written with `0600`, so on-disk state stops being world-readable on shared machines.
 
 ### Changes
 
-- LID↔phone resolution cache for cross-namespace mention gating. Baileys 7 addresses many group messages in `@lid` mode and carries the phone equivalent in `key.remoteJidAlt` / `key.participantAlt`; we record those mappings (bounded LRU, 1000 entries) so a later mention written in `@lid` form against a bot whose captured identity is `@s.whatsapp.net` still resolves correctly. Resolves false negatives in mention-required groups when the same physical user appears in both namespaces.
-- `/whatsapp:configure import <source-dir>` skill command. Migrates an existing Baileys multi-file auth state from another local install (OpenClaw, wppconnect, prior checkout) into this plugin's auth dir. Backs up the previous session, copies the new files, re-tightens perms. User runs `/reload-plugins` to reconnect with imported credentials. No re-pairing required.
-- Permission relay prompts now extract a tool-specific highlight from the request's `input_preview`. Bash shows the command in a code block; Edit/Write/MultiEdit highlight the file path with 📄; Read shows just the path; WebFetch surfaces the URL with 🌐; WebSearch the query with 🔍. Truncated JSON inputs fall back to a regex over the prefix, so the highlight survives even when CC's 200-char preview cut mid-value.
+- Group gating/LID: the bot now resolves `@lid` mentions back to its phone identity using the LID-to-phone hint Baileys carries on every group message, so a `requireMention` group no longer silently drops legitimate mentions when the chat is addressed in LID mode.
+- Auth/import: `/whatsapp:configure import <source-dir>` migrates an existing WhatsApp session from another local app (OpenClaw, wppconnect, a previous checkout) into the plugin's auth directory, so switching tools no longer forces you to scan a new QR or re-pair the device. The previous session is backed up automatically.
+- Permission relay/preview: tool prompts on WhatsApp now highlight the most relevant field instead of dumping raw JSON — Bash shows the command, Edit / Write / MultiEdit show the file with 📄, Read shows the path with 👁, WebFetch surfaces the URL with 🌐, WebSearch the query with 🔍 — so approvals on a phone are scannable in one glance.
 
 ## v1.5.0
 
 ### Changes
 
-- Pairing-code linking for headless setup. `/whatsapp:configure pair <phone>` writes the number into config and the next QR cycle generates an 8-character pairing code (`sock.requestPairingCode`) instead of a scannable QR. Code is stored in `status.json` so the skill can show it; refreshes alongside the QR rotation. Disable with `/whatsapp:configure pair off`. Verified against `@whiskeysockets/baileys` source — only fires when `sock.authState.creds.registered` is false.
-- `edit_message` tool. Lets Claude correct a previously-sent message in place. WhatsApp shows an "edited" tag and skips push notifications, so corrections don't spam the chat. Constructed from `chat_id` + `message_id` + `fromMe: true` — WhatsApp rejects edits server-side for messages that weren't ours, so no sent-history cache is needed.
-- `chunkMode: newline` for long replies. The `length` mode (default, current behavior) hard-cuts at 4096 characters; `newline` looks back from the limit for the nearest paragraph (`\n\n`), then line, then space break, falling back to a hard cut only when nothing usable lies past the half-way point. Configurable via `/whatsapp:configure chunk-mode newline`.
-- `replyToMode` for chunked replies — `off` / `first` (default) / `all`. Controls which chunks include a quote-reply pointer to the original inbound message. Set with `/whatsapp:configure reply-to <mode>`.
-- `ackReaction` (optional emoji acknowledgement). When set, the bot reacts to inbound messages from allowlisted contacts immediately on receipt, before Claude composes a reply. Closes the silence gap between "user sends" and "agent responds". Set with `/whatsapp:configure ack 👀`; clear with `/whatsapp:configure ack off`.
-- Auto-document for long replies. When Claude's reply exceeds `documentThreshold` characters (default 0 = disabled; user-configurable), the plugin sends it as a single `.md`/`.txt` attachment instead of N chunked text messages. Filename and MIME chosen heuristically from content (`auto`) or forced via `documentFormat`. Set with `/whatsapp:configure document threshold 4000` and `/whatsapp:configure document format md`.
+- Pairing/linking: `/whatsapp:configure pair <phone>` generates an 8-character pairing code instead of a QR on the next link cycle, so headless servers and SSH-only sessions can connect a number without a camera or a screen. Disable with `/whatsapp:configure pair off`.
+- Edit/messages: new `edit_message` tool lets Claude correct a previously sent message in place. WhatsApp shows an "edited" tag and skips the push notification, so typo fixes stop spamming the chat.
+- Replies/chunking: `chunkMode: newline` splits long replies at the nearest paragraph, line, or space break instead of cutting at 4096 characters, so multi-message answers read naturally instead of breaking mid-word.
+- Replies/quote-reply: `replyToMode` (`off` / `first` / `all`) controls which chunks of a long reply quote the user's original message, so threaded conversations stay anchored without every chunk repeating the quote.
+- Replies/ack: `ackReaction` posts a configured emoji as soon as a message arrives from an allowlisted contact, so the user sees an instant receipt instead of silence while Claude composes the reply.
+- Replies/auto-document: long replies above a configurable threshold are sent as a single `.md` or `.txt` attachment instead of many chunked messages, so reviewing a 10-page analysis in WhatsApp becomes opening a file instead of scrolling forever.
 
 ## v1.4.0
 
 ### Fixes
 
-- Group `requireMention` is now actually enforced. The setting was declared on every group entry (`requireMention: true` by default) and documented in the `/whatsapp:access` skill, but the gate function never read it — every message in a configured group was delivered to Claude regardless of mentions. The bot's own JID is captured on connect, mentions and reply-to-quote authors are extracted from each inbound message, and groups marked `requireMention: true` now drop messages that neither @-mention the bot nor reply to one of its messages. If a message arrives before the bot identity is captured (a race between `connection.update` 'open' and the first `messages.upsert`), the gate fails closed.
-- `acquireLock()` no longer succeeds silently on filesystem errors. Replaced the non-atomic `existsSync` + `readFileSync` + `writeFileSync` sequence with a single `openSync(LOCK_FILE, 'wx')` (atomic create-or-fail via POSIX `O_EXCL` on macOS/Linux). EACCES, ENOSPC and similar errors now surface as a distinct `lock_error` status with a clear channel notification, instead of being swallowed and risking a duplicate connection. Corrupt or empty PID files are detected and reclaimed; stale-PID and self-PID cases each get a single bounded retry with `unlinkSync` race tolerance. Windows filesystems without true `O_EXCL` semantics may still allow concurrent acquisition.
+- Group gating/mention: `requireMention: true` on a group now actually filters messages — the setting was advertised in `/whatsapp:access` but never enforced, so the bot was responding to every message in mention-restricted groups. With this fix it only delivers messages that @-mention the bot or quote one of its prior messages, with a fail-closed fallback if the bot identity hasn't been captured yet.
+- Connection/lock: the single-instance lock now uses an atomic create and surfaces filesystem errors instead of swallowing them, so a disk-full or permission failure can no longer silently drop you back to the duplicate-connection loop. Corrupt or empty lock files and stale PIDs are reclaimed automatically.
 
 ### Changes
 
-- WhatsApp reactions on permission requests are now treated as enforced approvals. When Claude Code sends a `notifications/claude/channel/permission_request`, the plugin broadcasts a `🔐 Claude wants to run *<tool>*` prompt to every allowlisted DM contact carrying the request's `request_id` (5 lowercase letters, no `l`). The DM target can react with 👍/✅ to allow or 👎/❌ to deny, or reply with `yes <id>` / `no <id>` (case-insensitive — mobile autocaps work). Either path emits `notifications/claude/channel/permission` with `{request_id, behavior}` back to Claude Code and clears the pending entry. Pending requests time out after 5 minutes. The terminal-side approval dialog stays active throughout — this WhatsApp channel is additive, never blocks the local prompt. Permission text/reaction handling is restricted to DM only, so a `yes <id>` typed in an allowlisted group never accidentally consumes a pending approval. Reactions on non-permission messages still flow through to Claude as `[Reacted with X]` and are interpreted contextually.
-- Pure helpers (`splitJid`, `matchesBot`, `parsePermissionReply`, `acquireLock`) extracted to `lib.ts` with a `node:test` suite (`npm test` → 28 tests) covering JID parsing, permission reply parsing, and lock acquisition under contention/staleness/corruption/filesystem-error.
+- Permission relay: WhatsApp reactions and `yes <id>` / `no <id>` text on a permission prompt now actually approve or deny the pending tool, instead of being a hint that Claude may or may not follow. Approvals are restricted to the DM target so a stray `yes ABCDE` in a group can't trigger a tool. The terminal approval dialog stays active throughout — the WhatsApp channel is additive, never blocking. Pending requests expire after 5 minutes.
 
 ## v1.3.9
 
