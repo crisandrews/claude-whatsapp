@@ -111,6 +111,8 @@ Now only your approved contacts can reach Claude.
 
 ## [Access control](#access-control)
 
+### [DMs](#access-dms)
+
 | Command | Description |
 | --- | --- |
 | `/whatsapp:access` | List allowed users, pending pairings, and current policy |
@@ -119,10 +121,35 @@ Now only your approved contacts can reach Claude.
 | `/whatsapp:access allow <jid>` | Add a user directly |
 | `/whatsapp:access revoke <jid>` | Remove a user |
 | `/whatsapp:access policy <mode>` | Set DM policy: `pairing`, `allowlist`, or `disabled` |
-| `/whatsapp:access add-group <jid>` | Allow a group |
-| `/whatsapp:access remove-group <jid>` | Remove a group |
 
 Default policy is `pairing`. IDs are WhatsApp JIDs — format depends on your Baileys version (e.g. `56912345678@s.whatsapp.net` or `199999598137448@lid`). Check `/whatsapp:access` to see the exact IDs.
+
+### [Groups](#access-groups)
+
+WhatsApp groups are off by default — even if you've already paired the people in them. You explicitly opt the bot into each group.
+
+| Command | Description |
+| --- | --- |
+| `/whatsapp:access add-group <jid>` | Allow a group. Default mode: only delivers messages that @-mention the bot or quote one of its prior messages. |
+| `/whatsapp:access add-group <jid> --no-mention` | Allow a group with no mention filter — every message in the group goes to Claude. |
+| `/whatsapp:access remove-group <jid>` | Stop accepting messages from a group. |
+
+**How to add the bot to a group**
+
+1. In WhatsApp, open the group → **Group info** → **Add participant** → pick the contact you saved for the bot's number.
+2. Anyone in the group sends a message. The plugin sees it but **drops it silently** because the group isn't allowed yet.
+3. Look at the system log (`tail -f .whatsapp/logs/system.log` for project-local installs, or `tail -f ~/.claude/channels/whatsapp/logs/system.log` for global). The plugin logs a hint every minute per unknown group:
+   ```
+   unknown group dropped a message: 120363xxxxxxxxx@g.us (sender push name: Juan) — allow with /whatsapp:access add-group 120363xxxxxxxxx@g.us
+   ```
+4. Run that command. From then on, the group is delivered to Claude according to the mention setting.
+
+**Mention-only vs full delivery**
+
+- `requireMention: true` (default) — Claude only sees a group message if it @-mentions the bot or replies/quotes one of the bot's messages. Use this for busy groups where Claude shouldn't react to every message.
+- `requireMention: false` (set with `--no-mention`) — every group message goes to Claude. Use this for small focused groups where Claude is supposed to participate continuously.
+
+To switch modes after the fact, re-run `add-group` with or without the `--no-mention` flag — it overwrites the existing entry.
 
 ## [Features](#features)
 
@@ -139,6 +166,22 @@ Default policy is `pairing`. IDs are WhatsApp JIDs — format depends on your Ba
 | `search_messages` | Full-text search the local message store. Supports `word*`, `"exact phrase"`, `NEAR(a b, 5)`, `-excluded`. Optionally scoped to a chat. |
 | `fetch_history` | Ask WhatsApp to ship older messages for a chat. Anchor is the oldest known message; backfilled messages arrive in the background and are indexed automatically. |
 | `export_chat` | Dump a chat from the local store as `markdown`, `jsonl`, or `csv` under the inbox directory. Optional `since_ts` / `until_ts` window. |
+
+### [Talking to Claude through WhatsApp](#talking-to-claude-through-whatsapp)
+
+The tools above are MCP tools — Claude picks them automatically based on what you ask. Some example things to say from your phone:
+
+- *"Borra ese último mensaje, me equivoqué."* → `delete_message`
+- *"Arma una encuesta en el grupo de la oficina: ¿pizza, sushi o tacos?"* → `send_poll`
+- *"Buscá en mi chat con Mariana cuándo hablamos de la dirección."* → `search_messages`
+- *"Trae 50 mensajes más viejos de este chat."* → `fetch_history`
+- *"Exportá este chat como markdown."* → `export_chat`
+- *"Editá tu última respuesta y cambiá X por Y."* → `edit_message`
+
+**What's NOT a plugin feature (yet)**
+
+- Inviting or removing people from a group, renaming a group, or creating a new group from Claude. WhatsApp group administration is on the roadmap but not implemented — for now, do those things from your phone manually.
+- Sending voice notes (audio messages). Inbound voice is transcribed; outbound voice isn't.
 
 ### [Reactions](#reactions)
 

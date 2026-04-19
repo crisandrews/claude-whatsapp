@@ -827,7 +827,13 @@ async function handleInbound(msg: proto.IWebMessageInfo) {
 
   const result = gate(senderId, chatId, isGroup, mentions)
 
-  if (result === 'drop') return
+  if (result === 'drop') {
+    // Discovery hint: when a message from an unknown group is dropped, log
+    // it once per minute per group so the user can find the JID to allow
+    // (otherwise the only way to learn a group's JID is to grep traffic).
+    if (isGroup) maybeLogUnknownGroup(chatId, msg.pushName || '')
+    return
+  }
 
   // Show "typing..." indicator while Claude processes the message
   try { await sock!.sendPresenceUpdate('composing', chatId) } catch {}
@@ -893,6 +899,19 @@ async function handleInbound(msg: proto.IWebMessageInfo) {
       },
     },
   })
+}
+
+// Discovery aid: when a message arrives from a group that isn't on the
+// allowlist, log the JID once per minute per group so the user can find
+// it (only place where group JIDs surface in the wild). Throttled because
+// a chatty group would otherwise spam syslog.
+const unknownGroupLastLogged = new Map<string, number>()
+function maybeLogUnknownGroup(chatId: string, pushName: string): void {
+  const now = Date.now()
+  const last = unknownGroupLastLogged.get(chatId) ?? 0
+  if (now - last < 60_000) return
+  unknownGroupLastLogged.set(chatId, now)
+  syslog(`unknown group dropped a message: ${chatId}${pushName ? ` (sender push name: ${pushName})` : ''} — allow with /whatsapp:access add-group ${chatId}`)
 }
 
 // Lightweight text extraction for history backfill — text/caption only,
