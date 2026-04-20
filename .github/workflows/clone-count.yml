@@ -1,0 +1,62 @@
+name: Clone Count
+
+on:
+  schedule:
+    - cron: "0 6 * * *"   # 06:00 UTC; gives Traffic API ~6h lag to finalize yesterday's data
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch traffic and accumulate
+        env:
+          TRAFFIC_TOKEN: ${{ secrets.TRAFFIC_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          mkdir -p .github
+          HIST_FILE=.github/clone-history.json
+          BADGE_FILE=.github/clone-count.json
+
+          RESP=$(curl -sS --fail \
+            -H "Authorization: Bearer $TRAFFIC_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$REPO/traffic/clones")
+
+          if [ -f "$HIST_FILE" ]; then
+            HIST=$(cat "$HIST_FILE")
+          else
+            HIST='{}'
+          fi
+
+          HIST=$(echo "$HIST" | jq --argjson new "$RESP" '
+            reduce ($new.clones // [])[] as $d (.; .[$d.timestamp] = ($d.count // 0))
+          ')
+
+          TOTAL=$(echo "$HIST" | jq '[.[]] | add // 0')
+
+          echo "$HIST" | jq '.' > "$HIST_FILE"
+          jq -n --arg t "$TOTAL" \
+            '{schemaVersion:1,label:"Clones",message:$t,color:"blue"}' \
+            > "$BADGE_FILE"
+
+          echo "Total clones: $TOTAL"
+
+      - name: Commit if changed
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/clone-count.json .github/clone-history.json
+          if git diff --cached --quiet; then
+            echo "No change"
+          else
+            git commit -m "chore: update clone count"
+            git push
+          fi
