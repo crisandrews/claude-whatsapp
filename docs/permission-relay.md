@@ -9,6 +9,7 @@ When Claude Code wants to run a tool that requires user approval (a Bash command
 - [Restrictions](#restrictions)
 - [Failure modes](#failure-modes)
 - [Disabling the relay](#disabling-the-relay)
+- [Worked examples](#worked-examples)
 - [Protocol details](#protocol-details)
 
 ---
@@ -153,6 +154,79 @@ Two ways:
 2. **Set `dmPolicy` to `disabled`**. This drops all DM traffic, including permission responses. More aggressive — also breaks DM messaging.
 
 There is no per-tool opt-out today. If you want to relay permissions for `Bash` but not for `Edit` (for example), that's not currently a supported configuration.
+
+---
+
+## Worked examples
+
+Three common situations, end-to-end. Assume you're paired and the relay is working.
+
+### Scenario 1 — Approving a Bash from your phone via reaction
+
+> Use case: Claude wants to run a command while you're away from the terminal.
+
+1. Claude Code emits a `permission_request` for `Bash` with `command: "ls -la /tmp"`.
+2. You feel your phone buzz. WhatsApp shows:
+
+   ```
+   🔐 Claude wants to run *Bash*
+   List files in /tmp
+   ```
+   ```
+   ls -la /tmp
+   ```
+
+   ```
+   Reply *yes abcde* / *no abcde* or react 👍 / 👎.
+   ```
+
+3. **Long-press the prompt message** and react with 👍.
+4. The plugin intercepts the reaction, emits `notifications/claude/channel/permission` with `behavior: "allow"`.
+5. The terminal prompt clears; Claude proceeds. Total latency: ~1-2 seconds.
+
+If you accidentally reacted with the wrong emoji, a second reaction overwrites (WhatsApp semantics). But the plugin also honors the race — if the terminal was used in the meantime, your late reaction is silently ignored.
+
+### Scenario 2 — Denying an Edit via text reply
+
+> Use case: Claude wants to edit a file you don't want touched.
+
+1. Prompt arrives:
+
+   ```
+   🔐 Claude wants to run *Edit*
+   Update config.ts
+   📄 /Users/me/repo/src/config.ts
+   ```
+   ```
+   {"file_path":"/Users/me/repo/src/config.ts","old_string":"const DEBUG = false","new_string":"const DEBUG = true"}
+   ```
+
+   ```
+   Reply *yes rmfkn* / *no rmfkn* or react 👍 / 👎.
+   ```
+
+2. You don't want that edit. Send a message in the same DM:
+
+   ```
+   no rmfkn
+   ```
+
+3. The plugin parses the reply, matches `rmfkn` to the pending request, and emits `behavior: "deny"`. Terminal prompt clears; Claude does not edit.
+
+Casing doesn't matter (`NO RMFKN` works — mobile autocaps is fine). Extra words do matter (`no rmfkn please` won't match — the parser is strict to avoid accidental approvals).
+
+### Scenario 3 — Multi-approver: two people on the allowlist, first wins
+
+> Use case: both you and a teammate are paired. Either of you can approve.
+
+1. Prompt arrives on **both** of your WhatsApp numbers simultaneously (the same `request_id`, same text, different message IDs).
+2. Your teammate reacts 👍 first.
+3. The plugin emits the `allow` decision. Claude proceeds.
+4. A few seconds later you also react 👍 from your phone — the plugin sees the reaction but the pending entry is already gone, so nothing happens. Your reaction stays on the message (as a normal emoji reaction) but doesn't affect anything.
+
+The **per-target check on response** is what makes this safe — even if someone else was in the allowlist and they reacted on a prompt addressed to a different JID, their reaction wouldn't count. Each message's `request_id` is only matchable by the contact the message was sent to.
+
+To approve from the terminal first instead, the mechanics are identical — whichever side responds first wins, the other sides time out silently.
 
 ---
 

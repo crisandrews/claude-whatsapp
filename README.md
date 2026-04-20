@@ -16,8 +16,8 @@
   <a href="#quick-setup">Quick Setup</a> ·
   <a href="#features">Features</a> ·
   <a href="#access-control">Access</a> ·
+  <a href="#documentation">Docs</a> ·
   <a href="#going-further">Going further</a> ·
-  <a href="#troubleshooting">Troubleshooting</a> ·
   <a href="https://github.com/crisandrews/claude-whatsapp/issues">Issues</a>
 </p>
 
@@ -33,7 +33,7 @@ This plugin fills that gap. It connects your WhatsApp number directly to Claude 
 - **[Access control](#access-control)** — pairing codes, allowlist, group gating with `requireMention`. Nobody talks to your agent without permission.
 - **[Permission relay](#permission-requests-over-whatsapp)** — when Claude wants to run a tool, get the prompt on WhatsApp; approve or deny with a 👍 reaction or `yes <id>` reply.
 - **[Local search and export](#search-history-and-export)** — every message indexed locally; full-text search, request older messages from WhatsApp, dump chats to markdown / jsonl / csv.
-- **[Voice transcription](#voice-transcription-optional)** — local Whisper, no API keys, 12+ languages.
+- **[Voice transcription](#voice-transcription-optional)** — local Whisper, no API keys, 99+ languages.
 - **[Media pipeline](#media)** — inbound images, audio, video, and documents auto-downloaded for Claude to read.
 - **[Reply shaping](#reply-shaping)** — paragraph-aware chunking, optional ack reaction, auto-document for long replies, message editing without push notifications.
 - **[Autonomous mode + web browsing](#autonomous-mode--web-browsing)** — combine with `--chrome` for a fully agentic WhatsApp assistant.
@@ -111,15 +111,32 @@ Now only your approved contacts can reach Claude.
 
 ## [Documentation](#documentation)
 
-In-depth guides for the bigger surfaces. The README below covers the at-a-glance reference; these pages have the worked examples and edge cases.
+In-depth guides, each with worked examples end-to-end. The README is the at-a-glance reference; these pages are where the tutorials live.
 
-- **[docs/groups.md](docs/groups.md)** — adding the bot to a WhatsApp group, the four access policies (open / mention-only / restricted-open / restricted-mention-only), discovery flow, member discovery, switching modes, edge cases, and why group access is independent of DM access.
-- **[docs/configuration.md](docs/configuration.md)** — every `/whatsapp:configure` sub-command (linking, audio transcription, reply shaping, auth migration, reset) and every key in `config.json`.
-- **[docs/permission-relay.md](docs/permission-relay.md)** — how Claude Code's permission prompts reach your phone, how to respond from text or reaction, tool-specific previews, restrictions, and the underlying notification protocol.
+**Setup & access**
+
+- **[docs/access.md](docs/access.md)** — DM access tutorial: pairing flow, the three policies, JID formats, recovery.
+- **[docs/groups.md](docs/groups.md)** — adding the bot to a WhatsApp group, the four access policies, discovery flow, member discovery, edge cases.
+
+**Runtime reference**
+
+- **[docs/configuration.md](docs/configuration.md)** — every `/whatsapp:configure` sub-command (linking, audio, reply shaping, auth migration, reset) and every key in `config.json`.
+- **[docs/tools.md](docs/tools.md)** — per-tool reference (`reply`, `react`, `search_messages`, `fetch_history`, …) with natural-language examples and pitfalls.
+- **[docs/permission-relay.md](docs/permission-relay.md)** — how Claude Code's permission prompts reach your phone, how to respond from text or reaction.
+- **[docs/media-voice.md](docs/media-voice.md)** — inbound media runtime: layout, the 50 MB cap, the `inbox/` sandbox, voice transcription end-to-end, stickers / locations / contacts.
+- **[docs/search-export.md](docs/search-export.md)** — full-text search, FTS5 query matrix, `fetch_history` flow, export formats.
+
+**Operations & integration**
+
+- **[docs/operations.md](docs/operations.md)** — background service (launchd/systemd/Task Scheduler), updates, cache, multi-instance, logs, reconnection.
+- **[docs/state-contract.md](docs/state-contract.md)** — public contract for companion plugins: channel dir, public files, MCP capabilities, ClawCode integration walkthrough.
+- **[docs/troubleshooting.md](docs/troubleshooting.md)** — symptoms → causes → fixes; covers every connection state and the most common gotchas.
 
 ## [Access control](#access-control)
 
 ### [DMs](#access-dms)
+
+> *Deep dive with worked examples: [docs/access.md](docs/access.md).*
 
 | Command | Description |
 | --- | --- |
@@ -134,7 +151,9 @@ Default policy is `pairing`. IDs are WhatsApp JIDs — format depends on your Ba
 
 ### [Groups](#access-groups)
 
-> **Group access is fully independent of DM access.** Allowing someone in a group does NOT let them DM the bot, and pairing a DM contact does NOT auto-allow them in any group.
+> *Deep dive with worked examples: [docs/groups.md](docs/groups.md).*
+
+**Group access is fully independent of DM access.** Allowing someone in a group does NOT let them DM the bot, and pairing a DM contact does NOT auto-allow them in any group.
 
 | Command | Description |
 | --- | --- |
@@ -144,40 +163,28 @@ Default policy is `pairing`. IDs are WhatsApp JIDs — format depends on your Ba
 | `/whatsapp:access group-revoke <group-jid> <member-jid>` | Remove a member from the group's whitelist. |
 | `/whatsapp:access remove-group <jid>` | Stop accepting messages from the group entirely. |
 
-The four policies (open, mention-only, restricted-open, restricted-mention-only), the full discovery flow for finding a group's JID, member discovery, and edge cases live in **[docs/groups.md](docs/groups.md)**.
-
 ## [Features](#features)
 
 ### [Tools](#tools)
 
+> *Deep dive with worked examples: [docs/tools.md](docs/tools.md).*
+
 | Tool | Purpose |
 | --- | --- |
-| `reply` | Send text or files. Auto-chunks long text at 4096 chars (configurable). Max 50 MB per file. |
+| `reply` | Send text or files. Auto-chunks long text at 4096 chars (configurable). |
 | `react` | Emoji reaction on a message. |
-| `edit_message` | Rewrite a previously sent message in place — no push notification, just an "edited" tag. WhatsApp's ~15-minute edit window applies. |
-| `delete_message` | Revoke a message Claude sent. Both sides see the standard "This message was deleted" placeholder. |
-| `send_poll` | Send a tappable poll with 2-12 options. Single-choice by default, optional multi-select. |
+| `edit_message` | Rewrite a previously-sent message in place — no push notification, just an "edited" tag. |
+| `delete_message` | Revoke a message Claude sent. |
+| `send_poll` | Send a tappable poll with 2-12 options. |
 | `download_attachment` | Access downloaded media from the inbox. |
-| `search_messages` | Full-text search the local message store. Supports `word*`, `"exact phrase"`, `NEAR(a b, 5)`, `-excluded`. Optionally scoped to a chat. |
-| `fetch_history` | Ask WhatsApp to ship older messages for a chat. Anchor is the oldest known message; backfilled messages arrive in the background and are indexed automatically. |
-| `list_group_senders` | List the participants who have spoken in a chat (group or DM), drawn from the local message store. Useful for picking which member to whitelist with `group-allow`. |
-| `export_chat` | Dump a chat from the local store as `markdown`, `jsonl`, or `csv` under the inbox directory. Optional `since_ts` / `until_ts` window. |
-
-### [Talking to Claude through WhatsApp](#talking-to-claude-through-whatsapp)
-
-The tools above are MCP tools — Claude picks them automatically based on what you ask. Some example things to say from your phone:
-
-- *"Delete that last message, I changed my mind."* → `delete_message`
-- *"Run a poll in the office group: pizza, sushi, or tacos?"* → `send_poll`
-- *"Search my chat with Maria for where we talked about the address."* → `search_messages`
-- *"Pull 50 older messages from this chat."* → `fetch_history`
-- *"Who's been talking in the office group lately?"* → `list_group_senders`
-- *"Export this chat as markdown."* → `export_chat`
-- *"Edit your last reply and change X to Y."* → `edit_message`
+| `search_messages` | Full-text search the local message store. |
+| `fetch_history` | Ask WhatsApp for older messages in a chat. |
+| `list_group_senders` | Participants who have spoken in a chat (from the local store). |
+| `export_chat` | Dump a chat as `markdown`, `jsonl`, or `csv` under the inbox. |
 
 **What's NOT a plugin feature (yet)**
 
-- Inviting or removing people from a group, renaming a group, or creating a new group from Claude. WhatsApp group administration is on the roadmap but not implemented — for now, do those things from your phone manually.
+- Inviting or removing people from a group, renaming a group, or creating a new group from Claude.
 - Sending voice notes (audio messages). Inbound voice is transcribed; outbound voice isn't.
 
 ### [Reactions](#reactions)
@@ -197,6 +204,8 @@ Skin-tone variants of 👍 / 👎 also work. Pending requests time out after 5 m
 
 ### [Permission requests over WhatsApp](#permission-requests-over-whatsapp)
 
+> *Deep dive with worked examples: [docs/permission-relay.md](docs/permission-relay.md).*
+
 When Claude Code asks to run a tool (e.g. a Bash command), the plugin broadcasts the request to every allowlisted DM contact:
 
 ```
@@ -208,21 +217,15 @@ Reply *yes abcde* / *no abcde* or react 👍 / 👎.
 
 Respond with text (`yes <id>` / `no <id>`, case-insensitive) or a reaction (👍 / ✅ to allow, 👎 / ❌ to deny). Whoever responds first wins; the terminal prompt remains active as a fallback. Pending requests expire after 5 minutes.
 
-Tool-specific previews, restrictions, failure modes, and the underlying notification protocol are in **[docs/permission-relay.md](docs/permission-relay.md)**.
-
 ### [Search, history, and export](#search-history-and-export)
 
-Every inbound and outbound message — including reactions, edits, file captions, and history backfills — is indexed locally in `<channel-dir>/messages.db`. Three tools sit on top:
+> *Deep dive with worked examples: [docs/search-export.md](docs/search-export.md).*
 
-| Tool | What it does |
-| --- | --- |
-| `search_messages` | Full-text search with snippets. Optionally scope to one chat. |
-| `fetch_history` | Pull older messages for a chat from WhatsApp. Indexed automatically as they arrive. |
-| `export_chat` | Write the chat to `markdown` / `jsonl` / `csv` under the inbox. |
-
-The store is local-only, created with user-only file permissions. Safe to delete to wipe history; it'll be recreated on next launch.
+Every inbound and outbound message — including reactions, edits, file captions, and history backfills — is indexed locally to SQLite + FTS5. Claude can full-text search your chats, pull older messages from WhatsApp on demand, and export a chat as `markdown` / `jsonl` / `csv`. The store is local-only, user-only permissions (`0600`), and safe to delete to wipe history.
 
 ### [Reply shaping](#reply-shaping)
+
+> *Deep dive with worked examples: [docs/configuration.md#reply-shaping](docs/configuration.md#reply-shaping).*
 
 Several knobs control how Claude's outbound messages look on WhatsApp. All set via `/whatsapp:configure`:
 
@@ -236,13 +239,17 @@ Several knobs control how Claude's outbound messages look on WhatsApp. All set v
 | `document threshold off` | Always chunk, never auto-document |
 | `document format md` / `txt` / `auto` | Force the auto-document filename / MIME (default `auto` picks based on content) |
 
-Full reference for every configuration knob, the `config.json` schema, and the reset / import flows in **[docs/configuration.md](docs/configuration.md)**.
-
 ### [Media](#media)
 
-Inbound photos, voice messages, videos, and documents are automatically downloaded to `.whatsapp/inbox/` inside your project directory (max 50 MB per file). The file path is included in the notification so Claude can read or reference it.
+> *Deep dive with worked examples: [docs/media-voice.md](docs/media-voice.md).*
+
+Inbound photos, voice messages, videos, and documents are automatically downloaded to `<channel-dir>/inbox/` — `<project>/.whatsapp/inbox/` for local-scope installs, `~/.claude/channels/whatsapp/inbox/` for the global fallback. Max 50 MB per inbound file. The file path is included in the notification so Claude can read or reference it.
+
+Stickers, locations, and contacts are forwarded as descriptive text (`[Sticker received]`, `[Location: lat, lng]`, `[Contact: name]`) without downloading a file.
 
 ### [Voice transcription (optional)](#voice-transcription-optional)
+
+> *Deep dive with worked examples: [docs/media-voice.md#voice-transcription-end-to-end](docs/media-voice.md#voice-transcription-end-to-end) and [docs/configuration.md#voice-transcription](docs/configuration.md#voice-transcription).*
 
 By default, voice messages arrive as `[Voice message received]` with the audio file saved. To enable automatic local transcription:
 
@@ -250,50 +257,11 @@ By default, voice messages arrive as `[Voice message received]` with the audio f
 /whatsapp:configure audio
 ```
 
-The Whisper model (~77MB) downloads on the first voice message and is cached permanently. Runs entirely on your machine — no API keys needed.
+The Whisper model (~77MB for `base`) downloads on the first voice message and is cached permanently. Runs entirely on your machine — 99+ languages supported, no API keys needed. Recommended: set your primary language explicitly (`/whatsapp:configure audio es`) for short-message accuracy.
 
-**Setting your language (recommended):** For best accuracy, set your primary language:
+Model size (`tiny` / `base` / `small`) and quality (`fast` / `balanced` / `best`) are configurable — full tradeoff tables in [docs/configuration.md#voice-transcription](docs/configuration.md#voice-transcription).
 
-```
-/whatsapp:configure audio es
-```
-
-| Code | Language | | Code | Language |
-| --- | --- | --- | --- | --- |
-| `es` | Spanish | | `ja` | Japanese |
-| `en` | English | | `zh` | Chinese |
-| `pt` | Portuguese | | `ko` | Korean |
-| `fr` | French | | `ar` | Arabic |
-| `de` | German | | `ru` | Russian |
-| `it` | Italian | | `hi` | Hindi |
-
-Without a language set, Whisper auto-detects — but setting it explicitly is more accurate, especially for short voice messages.
-
-**Model size** (tradeoff: accuracy vs speed):
-
-```
-/whatsapp:configure audio model small
-```
-
-| Model | Size | Speed | Accuracy |
-| --- | --- | --- | --- |
-| `tiny` | ~39 MB | Fastest | Lower |
-| `base` | ~77 MB | Balanced | Good (default) |
-| `small` | ~250 MB | Slower | Best |
-
-**Quality** (tradeoff: precision vs speed):
-
-```
-/whatsapp:configure audio quality best
-```
-
-| Quality | Description |
-| --- | --- |
-| `fast` | Quantized, no beam search |
-| `balanced` | Quantized, standard decoding (default) |
-| `best` | Full precision, 5-beam search. Slowest but most accurate |
-
-Disable with `/whatsapp:configure audio off`. All audio sub-commands (`audio model`, `audio quality`, `audio off`) and language codes are documented in **[docs/configuration.md](docs/configuration.md#voice-transcription)**.
+Disable with `/whatsapp:configure audio off`.
 
 ## [Going further](#going-further)
 
@@ -314,79 +282,35 @@ claude --dangerously-load-development-channels plugin:whatsapp@claude-whatsapp -
 
 Once the agent is running, type `/mcp` inside Claude Code and enable **computer use**. This lets the agent control your computer (click, type, take screenshots) — useful for tasks that go beyond chat.
 
-### [Using a WhatsApp number that's already on OpenClaw](#using-a-whatsapp-number-thats-already-on-openclaw)
+### [Migrating from another WhatsApp tool (OpenClaw, wppconnect, previous checkout)](#migrating-from-another-whatsapp-tool)
 
-If you have a WhatsApp number running an agent on [OpenClaw](https://github.com/openclaw/openclaw), you can try this plugin without losing anything. Just close OpenClaw (or stop that agent), scan the QR code here, and the number will work through Claude Code natively. When you're done, close Claude Code and reopen OpenClaw — your OpenClaw agent will reconnect and respond as before. Each platform re-links the WhatsApp session on startup, so they don't conflict — just don't run both at the same time on the same number.
+If your WhatsApp number already runs on another local Baileys-based tool — [OpenClaw](https://github.com/openclaw/openclaw), wppconnect, or a previous checkout of this plugin — you have two paths:
+
+**Option A — Just switch at link time.** Close the other tool (or stop that agent), scan the QR here, and the number will work through Claude Code natively. Each platform re-links the WhatsApp session on startup, so they don't conflict — just don't run both at the same time on the same number.
+
+**Option B — Import the session directly**, with no re-scan:
+
+```
+/whatsapp:configure import /path/to/other/.whatsapp/auth
+```
+
+Validates the source, backs up the current session to `auth.backup-<timestamp>/`, copies the credentials over, and tightens permissions. After import, `/reload-plugins` picks up the imported session.
+
+> **Important**: importing creds that are also in active use elsewhere will cause both sides to fight for the WhatsApp session. Stop the source app first.
+
+Full migration walkthrough in [docs/configuration.md#auth-migration](docs/configuration.md#auth-migration).
 
 ### [Always-on (run as a background service)](#always-on-run-as-a-background-service)
 
-To keep your WhatsApp agent running permanently, wrap Claude Code with a process manager:
+> *Full recipes (launchd, systemd, Task Scheduler) in [docs/operations.md#background-service](docs/operations.md#background-service).*
 
-**macOS (launchd):**
+To keep your WhatsApp agent running permanently, wrap Claude Code with your platform's process manager:
 
-Create `~/Library/LaunchAgents/com.whatsapp-agent.plist`:
+**macOS (launchd)** — create a `com.whatsapp-agent.plist` under `~/Library/LaunchAgents/` that runs `claude --dangerously-load-development-channels plugin:whatsapp@claude-whatsapp --dangerously-skip-permissions` with `RunAtLoad` and `KeepAlive` set.
 
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>com.whatsapp-agent</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>claude</string>
-        <string>--dangerously-load-development-channels</string>
-        <string>plugin:whatsapp@claude-whatsapp</string>
-        <string>--dangerously-skip-permissions</string>
-    </array>
-    <key>WorkingDirectory</key>
-    <string>/Users/YOUR_USER/my-whatsapp-agent</string>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>KeepAlive</key>
-    <true/>
-    <key>StandardOutPath</key>
-    <string>/tmp/whatsapp-agent.log</string>
-    <key>StandardErrorPath</key>
-    <string>/tmp/whatsapp-agent.err</string>
-</dict>
-</plist>
-```
+**Linux (systemd)** — create `~/.config/systemd/user/whatsapp-agent.service` with the same command; enable with `systemctl --user enable --now whatsapp-agent`.
 
-```sh
-launchctl load ~/Library/LaunchAgents/com.whatsapp-agent.plist
-```
-
-**Linux (systemd):**
-
-Create `~/.config/systemd/user/whatsapp-agent.service`:
-
-```ini
-[Unit]
-Description=WhatsApp Agent (Claude Code)
-
-[Service]
-WorkingDirectory=/home/YOUR_USER/my-whatsapp-agent
-ExecStart=claude --dangerously-load-development-channels plugin:whatsapp@claude-whatsapp --dangerously-skip-permissions
-Restart=always
-RestartSec=10
-
-[Install]
-WantedBy=default.target
-```
-
-```sh
-systemctl --user enable --now whatsapp-agent
-```
-
-**Windows (Task Scheduler):**
-
-Create a scheduled task that runs at login with the command:
-```
-claude --dangerously-load-development-channels plugin:whatsapp@claude-whatsapp --dangerously-skip-permissions
-```
-Set the "Start in" directory to your agent folder.
+**Windows (Task Scheduler)** — scheduled task that runs at login, with "Start in" set to your agent folder.
 
 ### [Multiple agents](#multiple-agents)
 
@@ -397,118 +321,57 @@ Each agent folder has its own WhatsApp session and access control:
 ~/agent-support/.whatsapp/   ← WhatsApp #2
 ```
 
-Install the plugin in each folder with local scope and scan a separate QR code for each.
+Install the plugin in each folder with local scope and scan a separate QR code for each. See [docs/operations.md#multiple-agents--multiple-numbers](docs/operations.md#multiple-agents--multiple-numbers) for the caveats (one instance per number, single-instance lock).
 
 ## [Session & data](#session--data)
 
-State is stored under a "channel directory" resolved in this order: `<project>/.whatsapp/` if the plugin is installed in local scope and the project directory matches the launch CWD, otherwise `~/.claude/channels/whatsapp/`.
+> *Integration details and public contract for companion plugins: [docs/state-contract.md](docs/state-contract.md).*
+
+State is stored under a "channel directory": `<project>/.whatsapp/` for local-scope installs, otherwise `~/.claude/channels/whatsapp/`. Top-level layout:
 
 ```
 <channel-dir>/
-├── auth/                          # WhatsApp session keys (Baileys multi-file)
-├── inbox/                         # Downloaded inbound media
-├── approved/                      # Pairing signal files (transient)
+├── auth/                          # WhatsApp session keys (private)
+├── inbox/                         # Downloaded inbound media + exports
 ├── logs/
-│   ├── conversations/
-│   │   ├── 2026-04-09.jsonl       # Messages (machine-readable)
-│   │   └── 2026-04-09.md          # Messages (human-readable)
-│   └── system.log                 # Server events (connections, errors)
-├── access.json                    # Access control: dmPolicy, allowFrom, groups, pending
-├── config.json                    # Plugin settings (audio, chunking, pairingPhone, …)
-├── recent-groups.json             # Unknown groups that dropped messages (discovery)
-├── messages.db                    # SQLite + FTS5 store backing search/history/export
+│   ├── conversations/             # Daily .jsonl + .md transcripts
+│   └── system.log                 # Server events
+├── access.json                    # DM policy, allowlist, groups, pending
+├── config.json                    # Plugin settings
+├── recent-groups.json             # Unknown groups that dropped messages
+├── messages.db                    # SQLite + FTS5 search store
 ├── status.json                    # Connection state
+├── transcriber-status.json        # Voice transcription pipeline state
 ├── qr.png                         # Last QR (transient)
 └── server.pid                     # Single-instance lock
 ```
 
-**Conversation logs** are stored in two formats:
-- **JSONL** — one JSON object per line, ideal for programmatic access, RAG, or memory systems
-- **Markdown** — human-readable chat transcript
-
-Reset with `/whatsapp:configure reset`.
+Reset the linked session with `/whatsapp:configure reset`. Everything else (access, config, history) survives a reset.
 
 ## [Works alongside other plugins](#works-alongside-other-plugins)
 
 This plugin is namespaced under its own plugin id (`whatsapp`) and its own MCP server name (`whatsapp`), so loading it together with other plugins does not collide on tool names, skill names, or hooks. Nothing here assumes any specific other plugin is installed.
 
-A few companion plugins already integrate with claude-whatsapp:
-
-- **ClawCode** ([crisandrews/ClawCode](https://github.com/crisandrews/ClawCode)) — agent-style companion (memory, personality, voice, dreaming). Its `/agent:messaging` walks new users through installing this plugin, `/agent:channels` reports our connection state, and crons declared with `delivery.channel: "whatsapp"` route results through our `reply` tool.
-
-### State contract for companion plugins
-
-Any companion that wants to detect or query claude-whatsapp can rely on the layout below. These paths and field names are part of the public contract — they will only change with a major version bump.
-
-**Channel directory resolution** (try in order):
-1. `<project>/.whatsapp/` if the plugin is installed in local scope for that project (`scope: "local"` + matching `projectPath` in `~/.claude/plugins/installed_plugins.json`).
-2. `~/.claude/channels/whatsapp/` as the global fallback.
-
-**Public files** (read-only from outside the plugin):
-
-| File | Purpose | Notes for detectors |
-|---|---|---|
-| `status.json` | `{ status, ts, …details }` where `status` is one of `deps_missing`, `qr_ready`, `connected`, `reconnecting`, `logged_out`, `idle_other_instance`, `lock_error`. `qr_ready` may also carry `pairingCode` + `pairingPhone` when headless linking is active. | Cheap connection check. |
-| `access.json` | `{ dmPolicy, allowFrom: string[], groups: Record<jid, {requireMention, allowFrom}>, pending }`. | Use to count allowed senders / detect lockdown. |
-| `config.json` | Top-level keys (no nested `audio` object): `audioTranscription` (bool), `audioLanguage` (ISO code or null), `audioModel`, `audioQuality`, `chunkMode`, `replyToMode`, `ackReaction`, `documentThreshold`, `documentFormat`, `pairingPhone`. | Use `audioTranscription === true` to detect that local Whisper is on. |
-| `recent-groups.json` | Map of `jid → { first_seen_ts, last_seen_ts, drop_count, last_sender_push_name, last_sender_id }` for groups that have dropped messages. | Useful for surfacing "groups awaiting allow" in companion UIs. |
-| `messages.db` | SQLite database with FTS5 index over inbound + outbound messages. | Schema is stable, but prefer calling our MCP `search_messages` / `list_group_senders` / `export_chat` tools instead of opening the DB directly — the WAL journal can be in flight. |
-| `inbox/` | Downloaded inbound media files. | Filenames are namespaced by sender + timestamp. |
-
-**Do not read or write from outside the plugin**:
-- `auth/` — Baileys session keys. Presence of this directory means a session has been linked, but the contents are rotating crypto material. Never copy or display.
-- `server.pid` — single-instance lock; managed by the server process.
-- `qr.png` — transient, regenerated by Baileys on each QR rotation.
-
-**MCP capabilities declared**:
-- `experimental['claude/channel']` — channel notification handler.
-- `experimental['claude/channel/permission']` — opts the plugin into Claude Code's permission relay protocol.
-
-**MCP server name**: `whatsapp`. Tools surface to the model as `mcp__whatsapp__<tool>` (e.g. `mcp__whatsapp__search_messages`).
+A few companion plugins already integrate with claude-whatsapp — see [docs/state-contract.md#worked-example-clawcode-integration](docs/state-contract.md#worked-example-clawcode-integration) for how ClawCode ([crisandrews/ClawCode](https://github.com/crisandrews/ClawCode)) uses the public contract.
 
 ## [Updating, uninstalling, and cache](#updating-uninstalling-and-cache)
 
-**Update to the latest version:**
+> *Full procedures and what-survives-what in [docs/operations.md#updating](docs/operations.md#updating).*
 
-1. Inside Claude Code:
-   ```
-   /plugin update whatsapp@claude-whatsapp
-   ```
-2. Close Claude (Ctrl+C or `/exit`)
-3. Reopen with the same launch command:
-   ```sh
-   claude --dangerously-load-development-channels plugin:whatsapp@claude-whatsapp --dangerously-skip-permissions
-   ```
-4. Wait for the "dependencies installed" notification (~60s on first update)
-5. Run `/reload-plugins`, then `/whatsapp:configure`
+**Update:** `/plugin update whatsapp@claude-whatsapp`, close Claude, relaunch, wait for the deps install notification (~60s on first update), then `/reload-plugins`. Your session / access / config / message history are preserved.
 
-Your WhatsApp session is preserved — no QR scan needed. The dependency install only happens once per update.
+**Uninstall:** `/plugin uninstall whatsapp@claude-whatsapp`. The channel directory remains — delete `<your-project>/.whatsapp/` (or `~/.claude/channels/whatsapp/`) if you also want to wipe state.
 
-**Uninstall:**
-
-```
-/plugin uninstall whatsapp@claude-whatsapp
-```
-
-**Clear cache (if reinstall fails or behaves unexpectedly):**
-
-Close Claude, then run in your terminal:
-
-```sh
-rm -rf ~/.claude/plugins/cache/claude-whatsapp
-```
-
-Then reopen Claude and install again.
+**Clear cache:** close Claude, `rm -rf ~/.claude/plugins/cache/claude-whatsapp`, reopen and reinstall.
 
 ## [Troubleshooting](#troubleshooting)
 
-- **After `/plugin update`, the agent stops responding and the channel feels frozen** — The plugin is reinstalling its dependencies in the background (Baileys, the SQLite native module, the Whisper transcriber if enabled). This can take a few minutes the first time after a release; faster on subsequent updates. **Wait, don't restart anything.** Run `/whatsapp:configure` to see live status — it'll report `deps_missing` while the install runs, then transition to `qr_ready` or `connected` automatically. A channel notification fires when WhatsApp is ready again. Once status moves out of `deps_missing`, `/reload-plugins` brings everything cleanly online without needing to relaunch Claude Code.
+> *Full catalogue of symptoms → causes → fixes in [docs/troubleshooting.md](docs/troubleshooting.md).*
+
+- **After `/plugin update`, the agent stops responding** — The plugin is reinstalling its dependencies in the background. Wait, don't restart. Run `/whatsapp:configure` to see live status — it'll report `deps_missing` while the install runs and transition out automatically. Once out, `/reload-plugins` brings everything cleanly online.
 - **Voice messages transcribe in the wrong language** — Set your language explicitly: `/whatsapp:configure audio es`. Without it, the model often defaults to English on short clips.
-- **Server didn't start (first launch)** — The first launch downloads dependencies (~60s). Run `/whatsapp:configure` — it waits automatically. If it still fails, close and reopen Claude with the channel flag.
 - **QR code expired** — Run `/whatsapp:configure` again. The server generates a fresh QR every ~20 seconds.
-- **WhatsApp disconnected** — Sessions can expire if you log out from your phone. Run `/whatsapp:configure reset` then `/whatsapp:configure` to scan a new QR.
-- **Voice transcription is slow** — Whisper runs on CPU. Try `/whatsapp:configure audio model tiny` for speed, or `/whatsapp:configure audio quality fast`.
-- **Reinstall fails or plugin behaves unexpectedly** — Clear the cache: close Claude, run `rm -rf ~/.claude/plugins/cache/claude-whatsapp` in terminal, reopen and install again.
+- **WhatsApp disconnected after a phone-side logout** — Run `/whatsapp:configure reset` then `/whatsapp:configure` to scan a new QR.
 
 ## [Important](#important)
 

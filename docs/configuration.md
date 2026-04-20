@@ -9,6 +9,7 @@ Reference for every `/whatsapp:configure` sub-command and every key in the plugi
 - [Reset](#reset)
 - [Status](#status)
 - [The config file](#the-config-file)
+- [Worked examples](#worked-examples)
 
 ---
 
@@ -231,4 +232,108 @@ Field reference (all top-level, no nesting):
 
 The file is created with `0600` permissions. The skill writes it atomically (tmp + rename) so a partially-written file is never observed.
 
-For state file paths, schemas, and the broader public contract that companion plugins can depend on, see [README → Works alongside other plugins](../README.md#works-alongside-other-plugins).
+For state file paths, schemas, and the broader public contract that companion plugins can depend on, see [docs/state-contract.md](state-contract.md).
+
+---
+
+## Worked examples
+
+Three end-to-end setups showing the commands working together, not in isolation.
+
+### Scenario 1 — Headless server, no phone camera handy
+
+> Use case: linking the agent on a cloud server or a machine behind a locked screen.
+
+1. **Set the pairing phone** (E.164, with or without `+`):
+
+   ```
+   /whatsapp:configure pair +5491155556666
+   ```
+
+2. **Trigger a link cycle**:
+
+   ```
+   /whatsapp:configure
+   ```
+
+   Instead of (or alongside) the QR, an 8-character code appears — something like `ABCD-EFGH`. You can also read it from `<channel-dir>/status.json`'s `pairingCode` field if your terminal ate it.
+
+3. **On your phone**: WhatsApp → **Settings → Linked Devices → Link with phone number instead** → enter the code.
+
+4. **Confirm** with `/whatsapp:configure status` — should show `connected`.
+
+5. **Optional**: turn pairing-code mode off so the next cycle reverts to QR-only:
+
+   ```
+   /whatsapp:configure pair off
+   ```
+
+   This doesn't unlink the session — it just stops the plugin from generating pairing codes alongside the QR.
+
+### Scenario 2 — Low-latency Spanish voice transcription
+
+> Use case: the bot mostly receives Spanish voice notes, you want snappy turnaround, you're OK with slightly lower accuracy for short clips.
+
+1. **Enable with language set**:
+
+   ```
+   /whatsapp:configure audio es
+   ```
+
+2. **Smallest model** (~39 MB, fastest):
+
+   ```
+   /whatsapp:configure audio model tiny
+   ```
+
+3. **Fastest quality level** (quantized, no beam search):
+
+   ```
+   /whatsapp:configure audio quality fast
+   ```
+
+4. **Confirm**:
+
+   ```
+   /whatsapp:configure status
+   ```
+
+   Reports: audio enabled, language `es`, model `tiny`, quality `fast`.
+
+5. **Have someone send a voice note**. The first one triggers a ~39 MB model download (~20 seconds on a typical connection); subsequent ones run transcription-only. See [docs/media-voice.md#voice-transcription-end-to-end](media-voice.md#voice-transcription-end-to-end) for what happens during that first-message warm-up.
+
+To switch to best accuracy later: `audio model small` + `audio quality best`. You lose the speed; you gain precision.
+
+### Scenario 3 — Long replies without flooding the chat
+
+> Use case: Claude sometimes writes long analyses. You want them delivered as a clean file, not as 6 chunked text messages back-to-back.
+
+1. **Chunk by paragraph, not by character count** — so that when chunking *does* happen, the seams are natural:
+
+   ```
+   /whatsapp:configure chunk-mode newline
+   ```
+
+2. **Auto-document over 4k chars**:
+
+   ```
+   /whatsapp:configure document threshold 4000
+   ```
+
+3. **Prefer markdown for structured content**:
+
+   ```
+   /whatsapp:configure document format md
+   ```
+
+   (The default `auto` would also pick `md` when the content looks markdown-like; `md` forces it.)
+
+4. **Optional**: quote only the first chunk on long replies (default is already `first`):
+
+   ```
+   /whatsapp:configure reply-to first
+   ```
+
+5. **Test**: ask Claude from your phone for a detailed analysis. Under 4000 chars → text reply. Over 4000 → arrives as `response.md` with the full content, quote-pointed at your original message.
+
+To go back to chunked text: `/whatsapp:configure document threshold off`.
