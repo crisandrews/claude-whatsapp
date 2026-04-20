@@ -514,7 +514,7 @@ Then reopen Claude and install again.
 
 - **Unofficial API** — Baileys is not endorsed by WhatsApp. Use responsibly — no spam, no bulk messaging.
 - **One linked device slot** — Unlink anytime from WhatsApp > Settings > Linked Devices.
-- **No message history** — Only sees messages as they arrive. Cannot fetch older messages.
+- **Local-only message history** — Inbound and outbound messages (including reactions, edits, and history backfills) are indexed to a local SQLite store with FTS5; the `search_messages`, `fetch_history`, and `export_chat` tools sit on top. Nothing leaves your machine.
 
 ## [Disclaimer](#disclaimer)
 
