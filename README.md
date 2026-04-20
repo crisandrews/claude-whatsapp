@@ -109,6 +109,14 @@ Message your WhatsApp number from another phone. It replies with a 6-character c
 
 Now only your approved contacts can reach Claude.
 
+## [Documentation](#documentation)
+
+In-depth guides for the bigger surfaces. The README below covers the at-a-glance reference; these pages have the worked examples and edge cases.
+
+- **[docs/groups.md](docs/groups.md)** — adding the bot to a WhatsApp group, the four access policies (open / mention-only / restricted-open / restricted-mention-only), discovery flow, member discovery, switching modes, edge cases, and why group access is independent of DM access.
+- **[docs/configuration.md](docs/configuration.md)** — every `/whatsapp:configure` sub-command (linking, audio transcription, reply shaping, auth migration, reset) and every key in `config.json`.
+- **[docs/permission-relay.md](docs/permission-relay.md)** — how Claude Code's permission prompts reach your phone, how to respond from text or reaction, tool-specific previews, restrictions, and the underlying notification protocol.
+
 ## [Access control](#access-control)
 
 ### [DMs](#access-dms)
@@ -126,39 +134,17 @@ Default policy is `pairing`. IDs are WhatsApp JIDs — format depends on your Ba
 
 ### [Groups](#access-groups)
 
-> **Group access is fully independent of DM access.** Allowing someone in a group does NOT let them DM the bot. To DM, that person still has to pair (or be added with `/whatsapp:access allow`). And conversely, a paired DM contact does NOT automatically get to talk to the bot in groups — you opt the bot into each group explicitly.
+> **Group access is fully independent of DM access.** Allowing someone in a group does NOT let them DM the bot, and pairing a DM contact does NOT auto-allow them in any group.
 
 | Command | Description |
 | --- | --- |
 | `/whatsapp:access add-group <jid>` | Allow a group, mention-only (default). |
 | `/whatsapp:access add-group <jid> --no-mention` | Allow a group, open delivery (every message goes to Claude). |
-| `/whatsapp:access group-allow <group-jid> <member-jid>` | Restrict the group to specific members (anyone not listed is dropped). |
-| `/whatsapp:access group-revoke <group-jid> <member-jid>` | Remove a member from the group's whitelist. Empty whitelist means "anyone in the group can trigger" again. |
+| `/whatsapp:access group-allow <group-jid> <member-jid>` | Restrict the group to specific members. |
+| `/whatsapp:access group-revoke <group-jid> <member-jid>` | Remove a member from the group's whitelist. |
 | `/whatsapp:access remove-group <jid>` | Stop accepting messages from the group entirely. |
 
-**Policy matrix**
-
-| Goal | Commands |
-| --- | --- |
-| Anyone in the group, every message → Claude | `add-group <jid> --no-mention` |
-| Anyone in the group, only when they @-mention or quote the bot | `add-group <jid>` (default) |
-| Only specific people, only when they @-mention or quote the bot | `add-group <jid>` then `group-allow <jid> <member-jid>` (one per allowed member) |
-| Only specific people, every message they send → Claude | `add-group <jid> --no-mention` then `group-allow <jid> <member-jid>` |
-
-You can switch the mention setting after the fact by re-running `add-group` with or without `--no-mention`. The whitelist (`allowFrom`) is preserved.
-
-**Discovery flow — adding the bot to a group**
-
-1. In WhatsApp, open the group → **Group info** → **Add participant** → pick the contact you saved for the bot's number.
-2. Anyone in the group sends a message. The bot drops it (the group isn't configured yet) but records the JID.
-3. Run `/whatsapp:access` — at the bottom, under **Recently dropped groups**, the new group shows up with a copy-paste `add-group` command and the most recent sender's push name to help you recognize the chat.
-4. Run that command, optionally with `--no-mention` if you want open delivery.
-5. To restrict to specific people in the group, ask Claude to **list the senders** in that chat — under the hood it calls the `list_group_senders` tool against the local store and returns each participant's push name + JID. Pick whose JIDs you want to whitelist and run `group-allow <group-jid> <member-jid>` for each.
-
-**Mention-only vs open delivery, in plain terms**
-
-- **Mention-only**: Claude doesn't see a group message at all unless someone explicitly @-mentions the bot or quote-replies one of its messages. Good for active groups where Claude should only chime in when called.
-- **Open**: every message in the group reaches Claude. Good for small focused chats where Claude is meant to participate continuously.
+The four policies (open, mention-only, restricted-open, restricted-mention-only), the full discovery flow for finding a group's JID, member discovery, and edge cases live in **[docs/groups.md](docs/groups.md)**.
 
 ## [Features](#features)
 
@@ -220,13 +206,9 @@ ls -la /tmp
 Reply *yes abcde* / *no abcde* or react 👍 / 👎.
 ```
 
-You can respond from your phone in two ways:
-- **Reply with text**: `yes <id>` to allow, `no <id>` to deny. Case-insensitive — mobile autocaps work.
-- **React to the message**: 👍 / ✅ to allow, 👎 / ❌ to deny.
+Respond with text (`yes <id>` / `no <id>`, case-insensitive) or a reaction (👍 / ✅ to allow, 👎 / ❌ to deny). Whoever responds first wins; the terminal prompt remains active as a fallback. Pending requests expire after 5 minutes.
 
-Whoever responds first wins. The terminal prompt remains active as a fallback. Pending requests expire after 5 minutes.
-
-Tool prompts highlight the most relevant part of the request: **Bash** shows the command, **Edit / Write / MultiEdit** show the file with 📄, **Read** shows the path with 👁, **WebFetch** the URL with 🌐, **WebSearch** the query with 🔍.
+Tool-specific previews, restrictions, failure modes, and the underlying notification protocol are in **[docs/permission-relay.md](docs/permission-relay.md)**.
 
 ### [Search, history, and export](#search-history-and-export)
 
@@ -253,6 +235,8 @@ Several knobs control how Claude's outbound messages look on WhatsApp. All set v
 | `document threshold 4000` | Send replies above N chars as a single `.md` / `.txt` attachment instead of many chunked messages |
 | `document threshold off` | Always chunk, never auto-document |
 | `document format md` / `txt` / `auto` | Force the auto-document filename / MIME (default `auto` picks based on content) |
+
+Full reference for every configuration knob, the `config.json` schema, and the reset / import flows in **[docs/configuration.md](docs/configuration.md)**.
 
 ### [Media](#media)
 
@@ -309,7 +293,7 @@ Without a language set, Whisper auto-detects — but setting it explicitly is mo
 | `balanced` | Quantized, standard decoding (default) |
 | `best` | Full precision, 5-beam search. Slowest but most accurate |
 
-Disable with `/whatsapp:configure audio off`.
+Disable with `/whatsapp:configure audio off`. All audio sub-commands (`audio model`, `audio quality`, `audio off`) and language codes are documented in **[docs/configuration.md](docs/configuration.md#voice-transcription)**.
 
 ## [Going further](#going-further)
 
