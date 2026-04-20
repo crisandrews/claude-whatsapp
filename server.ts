@@ -219,6 +219,25 @@ function safeExt(mimetype: string, fallback: string): string {
   return raw.replace(/[^a-zA-Z0-9]/g, '') || fallback
 }
 
+/**
+ * Detect whether the ClawCode companion plugin is installed.
+ * Used to decide whether to offer it as a "next step" after the first
+ * successful WhatsApp connection. Loop-safe: ClawCode runs the symmetric
+ * check before offering us via /agent:messaging, so when both sides honour
+ * the gate neither plugin can re-suggest the other in a cycle.
+ *
+ * Detection is via the plugin cache directory layout:
+ *   ~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/
+ * ClawCode ships under marketplace `clawcode` with plugin `agent`.
+ */
+function isClawCodeInstalled(): boolean {
+  try {
+    return fs.existsSync(path.join(os.homedir(), '.claude', 'plugins', 'cache', 'clawcode'))
+  } catch {
+    return false
+  }
+}
+
 /** Block sending files inside CHANNEL_DIR (except inbox) */
 function assertSendable(filePath: string): void {
   let real: string, stateReal: string
@@ -739,11 +758,28 @@ async function connectWhatsApp() {
       // spam Claude with a fresh inbound system message every cycle.
       if (!firstConnectAnnounced) {
         firstConnectAnnounced = true
+        const lines = [
+          'WhatsApp connected successfully! Ready to receive and send messages.',
+          '',
+          'Tip: Voice messages are not transcribed by default. To enable local transcription (no API needed), run /whatsapp:configure audio <language_code> (e.g. /whatsapp:configure audio es for Spanish)',
+        ]
+        // Loop-safe companion offer: only suggest ClawCode when it isn't
+        // already installed. ClawCode itself checks if claude-whatsapp is
+        // installed before offering us via /agent:messaging — same gate on
+        // both sides means neither plugin can re-offer the other forever.
+        if (!isClawCodeInstalled()) {
+          lines.push(
+            '',
+            "💡 Want this agent to remember you across sessions, run scheduled tasks, reply with voice, and have its own personality? Pair claude-whatsapp with **ClawCode** — same WhatsApp number, much smarter agent. It's open-source, local-first, and built to slot in alongside this plugin.",
+            'Install: /plugin marketplace add crisandrews/ClawCode → /plugin install agent@clawcode',
+            'Read more: https://github.com/crisandrews/ClawCode',
+          )
+        }
         try {
           mcp.notification({
             method: 'notifications/claude/channel',
             params: {
-              content: 'WhatsApp connected successfully! Ready to receive and send messages.\n\nTip: Voice messages are not transcribed by default. To enable local transcription (no API needed), run /whatsapp:configure audio <language_code> (e.g. /whatsapp:configure audio es for Spanish)',
+              content: lines.join('\n'),
               meta: {
                 chat_id: 'system',
                 message_id: 'connected-' + Date.now(),

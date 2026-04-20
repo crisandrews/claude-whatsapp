@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changes
+
+- Onboarding/companion: when WhatsApp links successfully for the first time in a session, the channel notification now also suggests pairing with the [ClawCode](https://github.com/crisandrews/ClawCode) companion plugin (memory across sessions, scheduled tasks, voice replies, persona) — but only when ClawCode isn't already installed locally, so users who set up via ClawCode → claude-whatsapp don't see the companion offered back to them in a loop.
+
 ## v1.9.0
 
 ### Changes
