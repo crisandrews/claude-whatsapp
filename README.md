@@ -417,21 +417,25 @@ Install the plugin in each folder with local scope and scan a separate QR code f
 
 ## [Session & data](#session--data)
 
-State is stored in `.whatsapp/` inside your project directory:
+State is stored under a "channel directory" resolved in this order: `<project>/.whatsapp/` if the plugin is installed in local scope and the project directory matches the launch CWD, otherwise `~/.claude/channels/whatsapp/`.
 
 ```
-~/my-whatsapp-agent/.whatsapp/
-├── auth/                          # WhatsApp session keys
-├── inbox/                         # Downloaded media
-├── approved/                      # Pairing signals
+<channel-dir>/
+├── auth/                          # WhatsApp session keys (Baileys multi-file)
+├── inbox/                         # Downloaded inbound media
+├── approved/                      # Pairing signal files (transient)
 ├── logs/
 │   ├── conversations/
 │   │   ├── 2026-04-09.jsonl       # Messages (machine-readable)
 │   │   └── 2026-04-09.md          # Messages (human-readable)
 │   └── system.log                 # Server events (connections, errors)
-├── access.json                    # Access control
-├── config.json                    # Plugin settings (audio, language)
-└── status.json                    # Connection state
+├── access.json                    # Access control: dmPolicy, allowFrom, groups, pending
+├── config.json                    # Plugin settings (audio, chunking, pairingPhone, …)
+├── recent-groups.json             # Unknown groups that dropped messages (discovery)
+├── messages.db                    # SQLite + FTS5 store backing search/history/export
+├── status.json                    # Connection state
+├── qr.png                         # Last QR (transient)
+└── server.pid                     # Single-instance lock
 ```
 
 **Conversation logs** are stored in two formats:
@@ -439,6 +443,44 @@ State is stored in `.whatsapp/` inside your project directory:
 - **Markdown** — human-readable chat transcript
 
 Reset with `/whatsapp:configure reset`.
+
+## [Works alongside other plugins](#works-alongside-other-plugins)
+
+This plugin is namespaced under its own plugin id (`whatsapp`) and its own MCP server name (`whatsapp`), so loading it together with other plugins does not collide on tool names, skill names, or hooks. Nothing here assumes any specific other plugin is installed.
+
+A few companion plugins already integrate with claude-whatsapp:
+
+- **ClawCode** ([crisandrews/ClawCode](https://github.com/crisandrews/ClawCode)) — agent-style companion (memory, personality, voice, dreaming). Its `/agent:messaging` walks new users through installing this plugin, `/agent:channels` reports our connection state, and crons declared with `delivery.channel: "whatsapp"` route results through our `reply` tool.
+
+### State contract for companion plugins
+
+Any companion that wants to detect or query claude-whatsapp can rely on the layout below. These paths and field names are part of the public contract — they will only change with a major version bump.
+
+**Channel directory resolution** (try in order):
+1. `<project>/.whatsapp/` if the plugin is installed in local scope for that project (`scope: "local"` + matching `projectPath` in `~/.claude/plugins/installed_plugins.json`).
+2. `~/.claude/channels/whatsapp/` as the global fallback.
+
+**Public files** (read-only from outside the plugin):
+
+| File | Purpose | Notes for detectors |
+|---|---|---|
+| `status.json` | `{ status, ts, …details }` where `status` is one of `deps_missing`, `qr_ready`, `connected`, `reconnecting`, `logged_out`, `idle_other_instance`, `lock_error`. `qr_ready` may also carry `pairingCode` + `pairingPhone` when headless linking is active. | Cheap connection check. |
+| `access.json` | `{ dmPolicy, allowFrom: string[], groups: Record<jid, {requireMention, allowFrom}>, pending }`. | Use to count allowed senders / detect lockdown. |
+| `config.json` | Top-level keys (no nested `audio` object): `audioTranscription` (bool), `audioLanguage` (ISO code or null), `audioModel`, `audioQuality`, `chunkMode`, `replyToMode`, `ackReaction`, `documentThreshold`, `documentFormat`, `pairingPhone`. | Use `audioTranscription === true` to detect that local Whisper is on. |
+| `recent-groups.json` | Map of `jid → { first_seen_ts, last_seen_ts, drop_count, last_sender_push_name, last_sender_id }` for groups that have dropped messages. | Useful for surfacing "groups awaiting allow" in companion UIs. |
+| `messages.db` | SQLite database with FTS5 index over inbound + outbound messages. | Schema is stable, but prefer calling our MCP `search_messages` / `list_group_senders` / `export_chat` tools instead of opening the DB directly — the WAL journal can be in flight. |
+| `inbox/` | Downloaded inbound media files. | Filenames are namespaced by sender + timestamp. |
+
+**Do not read or write from outside the plugin**:
+- `auth/` — Baileys session keys. Presence of this directory means a session has been linked, but the contents are rotating crypto material. Never copy or display.
+- `server.pid` — single-instance lock; managed by the server process.
+- `qr.png` — transient, regenerated by Baileys on each QR rotation.
+
+**MCP capabilities declared**:
+- `experimental['claude/channel']` — channel notification handler.
+- `experimental['claude/channel/permission']` — opts the plugin into Claude Code's permission relay protocol.
+
+**MCP server name**: `whatsapp`. Tools surface to the model as `mcp__whatsapp__<tool>` (e.g. `mcp__whatsapp__search_messages`).
 
 ## [Updating, uninstalling, and cache](#updating-uninstalling-and-cache)
 
