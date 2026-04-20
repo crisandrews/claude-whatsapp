@@ -304,6 +304,11 @@ interface PluginConfig {
 
   // Headless linking (Sprint 1)
   pairingPhone?: string                     // E.164 digits only (no +). When set + not yet paired, request a pairing code instead of waiting for QR scan.
+
+  // Inbound debouncing: when a user fires multiple plain-text messages in
+  // quick succession, batch them into a single notification instead of one
+  // agent turn per message. `0` disables. Default: 2000ms.
+  inboundDebounceMs?: number
 }
 
 function loadConfig(): PluginConfig {
@@ -939,18 +944,104 @@ async function handleInbound(msg: proto.IWebMessageInfo) {
   // Log inbound message
   logConversation('in', pushName, text, meta)
 
-  // Send to Claude via MCP channel notification
+  // Inbound debouncing: batch rapid plain-text messages from the same sender
+  // into a single agent turn. Attachments, reactions, and empty-text paths
+  // flush any pending bucket first (to preserve order) and then notify
+  // immediately.
+  const debounceMs = loadConfig().inboundDebounceMs ?? 2000
+  const hasAttachment = !!meta.attachment_kind
+  const isReaction = !!meta.reaction
+  const bucketKey = `${chatId}|${senderId}`
+
+  if (debounceMs <= 0 || hasAttachment || isReaction || !text) {
+    flushInbound(bucketKey)
+    mcp.notification({
+      method: 'notifications/claude/channel',
+      params: {
+        content: text,
+        meta: {
+          chat_id: chatId,
+          message_id: messageId,
+          user: pushName,
+          user_id: senderId,
+          ts,
+          ...meta,
+        },
+      },
+    })
+    return
+  }
+
+  enqueueInbound(bucketKey, {
+    text,
+    messageId,
+    ts,
+    pushName,
+    chatId,
+    senderId,
+  }, debounceMs)
+}
+
+// ---------------------------------------------------------------------------
+// Inbound debouncing (rapid-fire text batching)
+// ---------------------------------------------------------------------------
+// Per (chat_id, sender_id) bucket. Each incoming plain-text message appends to
+// the bucket and resets a sliding timer; on expiry the batch is emitted as a
+// single MCP notification. Attachments/reactions flush the pending bucket
+// first so ordering the user saw on their phone is preserved on the agent
+// side.
+interface PendingMessage {
+  text: string
+  messageId: string
+  ts: string
+  pushName: string
+  chatId: string
+  senderId: string
+}
+interface PendingBucket {
+  messages: PendingMessage[]
+  timer: ReturnType<typeof setTimeout>
+}
+const pendingInbound = new Map<string, PendingBucket>()
+
+function enqueueInbound(key: string, entry: PendingMessage, delayMs: number): void {
+  const existing = pendingInbound.get(key)
+  if (existing) {
+    clearTimeout(existing.timer)
+    existing.messages.push(entry)
+    existing.timer = setTimeout(() => flushInbound(key), delayMs)
+    return
+  }
+  const bucket: PendingBucket = {
+    messages: [entry],
+    timer: setTimeout(() => flushInbound(key), delayMs),
+  }
+  pendingInbound.set(key, bucket)
+}
+
+function flushInbound(key: string): void {
+  const bucket = pendingInbound.get(key)
+  if (!bucket) return
+  clearTimeout(bucket.timer)
+  pendingInbound.delete(key)
+  if (bucket.messages.length === 0) return
+
+  // Newest message wins for reply threading/IDs (matches OpenClaw convention).
+  const last = bucket.messages[bucket.messages.length - 1]
+  const content = bucket.messages.map(m => m.text).join('\n')
+  const batchedCount = bucket.messages.length
+
   mcp.notification({
     method: 'notifications/claude/channel',
     params: {
-      content: text,
+      content,
       meta: {
-        chat_id: chatId,
-        message_id: messageId,
-        user: pushName,
-        user_id: senderId,
-        ts,
-        ...meta,
+        chat_id: last.chatId,
+        message_id: last.messageId,
+        user: last.pushName,
+        user_id: last.senderId,
+        ts: last.ts,
+        ...(batchedCount > 1 ? { batched_count: String(batchedCount) } : {}),
       },
     },
   })
@@ -2042,6 +2133,7 @@ let shuttingDown = false
 function shutdown() {
   if (shuttingDown) return
   shuttingDown = true
+  for (const key of Array.from(pendingInbound.keys())) flushInbound(key)
   releaseLock()
   closeDb()
   sock?.end(undefined)

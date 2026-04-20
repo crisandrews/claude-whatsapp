@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+## [1.12.0] — 2026-04-20
+
+### Added
+
+- Inbound debouncing: rapid plain-text messages from the same sender are now batched into a single agent turn instead of firing one notification per line. A 2-second sliding window (configurable via `inboundDebounceMs` in `config.json`; `0` disables) accumulates text while the user keeps typing, then flushes a single consolidated notification. Attachments, voice notes, reactions, and permission relays still flush immediately (flushing any pending text first, so ordering is preserved). Matches the OpenClaw `messages.inbound.debounceMs` behavior so agents written against either gateway see the same shape.
+
+### Changed
+
+- Onboarding: `/whatsapp:configure` now asks "QR code or pairing code?" on a fresh link cycle when `pairingPhone` isn't already set, so the headless option is discoverable without the user needing to already know the `pair <phone>` subcommand.
+- Onboarding: on a `connected` status, `/whatsapp:configure` now re-surfaces the ClawCode companion invite (when ClawCode isn't installed) and the voice-transcription tip — same wording as the first-connect channel notification, which gets collapsed in the UI and was easy to miss.
+
 ## [1.11.0] — 2026-04-19
 
 ### Added

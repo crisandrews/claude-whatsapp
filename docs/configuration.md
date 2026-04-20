@@ -5,6 +5,7 @@ Reference for every `/whatsapp:configure` sub-command and every key in the plugi
 - [Linking](#linking)
 - [Voice transcription](#voice-transcription)
 - [Reply shaping](#reply-shaping)
+- [Inbound debouncing](#inbound-debouncing)
 - [Auth migration](#auth-migration)
 - [Reset](#reset)
 - [Status](#status)
@@ -17,9 +18,9 @@ Reference for every `/whatsapp:configure` sub-command and every key in the plugi
 
 ### `/whatsapp:configure` (no args)
 
-Opens the QR code on screen and shows current connection state. The most common path for a fresh install with a phone in hand.
+Prompts for QR vs pairing code on a fresh link cycle, then opens the QR (or tells you how to request a pairing code). The most common path for a fresh install with a phone in hand.
 
-If the channel is already linked, this just reports `connected` plus the current access summary.
+If the channel is already linked, this reports `connected` plus the current access summary, and — while ClawCode isn't installed — surfaces a one-time invite to pair with the [ClawCode](https://github.com/crisandrews/ClawCode) companion agent.
 
 ### `/whatsapp:configure pair <phone>`
 
@@ -159,6 +160,34 @@ Picks the filename and MIME type for auto-document.
 
 ---
 
+## Inbound debouncing
+
+When someone fires several plain-text messages at the bot in quick succession ("hi" → "actually" → "can you…"), the plugin waits for a short pause before handing the batch to Claude — one agent turn for the whole thought instead of three half-started answers.
+
+### How it works
+
+A 2-second sliding window per `(chat, sender)` pair. Each new text resets the timer. On expiry, the plugin joins the texts with newlines and sends a single MCP notification. Reply threading points at the most recent `message_id` (so a quoted reply lines up with the last thing the user wrote).
+
+Attachments, voice notes, reactions, and permission replies (`yes <id>`) bypass the buffer: any pending text is flushed first so ordering is preserved, then the media or reaction is delivered immediately on its own.
+
+### Tuning
+
+The window is controlled by the `inboundDebounceMs` key in `config.json`:
+
+| Value | Behavior |
+|---|---|
+| `2000` (default) | Wait 2 seconds after the last text before flushing. |
+| Any positive integer | Custom window in milliseconds. `5000` gives a more patient "let them finish typing" feel. |
+| `0` | Disable — every message fires its own notification immediately, like pre-1.12 behavior. |
+
+There's no `/whatsapp:configure` subcommand yet; edit `<channel-dir>/config.json` by hand and the file watcher picks up the change on the next message.
+
+### Why this exists
+
+Without debouncing, bursts of short messages each start their own agent turn, which can cause Claude to answer mid-thought or respond three times in a row when the user was still composing. Batching matches the OpenClaw gateway's `messages.inbound.debounceMs` feature so agents written against either gateway behave the same.
+
+---
+
 ## Auth migration
 
 ### `/whatsapp:configure import <source-dir>`
@@ -229,6 +258,7 @@ Field reference (all top-level, no nesting):
 | `documentThreshold` | number | Chars; over the threshold sends as a document. `0` = disabled, `-1` = always. Default: `0`. |
 | `documentFormat` | `"auto"` \| `"md"` \| `"txt"` | Filename / MIME for auto-document. Default: `"auto"`. |
 | `pairingPhone` | string \| undefined | E.164 digits (no `+`). Triggers pairing-code linking on next QR cycle. |
+| `inboundDebounceMs` | number | Sliding window (ms) to batch rapid plain-text messages from the same sender into one agent turn. `0` disables. Default: `2000`. |
 
 The file is created with `0600` permissions. The skill writes it atomically (tmp + rename) so a partially-written file is never observed.
 
