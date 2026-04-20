@@ -502,6 +502,7 @@ Then reopen Claude and install again.
 
 ## [Troubleshooting](#troubleshooting)
 
+- **After `/plugin update`, the agent stops responding and the channel feels frozen** — The plugin is reinstalling its dependencies in the background (Baileys, the SQLite native module, the Whisper transcriber if enabled). This can take a few minutes the first time after a release; faster on subsequent updates. **Wait, don't restart anything.** Run `/whatsapp:configure` to see live status — it'll report `deps_missing` while the install runs, then transition to `qr_ready` or `connected` automatically. A channel notification fires when WhatsApp is ready again.
 - **Voice messages transcribe in the wrong language** — Set your language explicitly: `/whatsapp:configure audio es`. Without it, the model often defaults to English on short clips.
 - **Server didn't start (first launch)** — The first launch downloads dependencies (~60s). Run `/whatsapp:configure` — it waits automatically. If it still fails, close and reopen Claude with the channel flag.
 - **QR code expired** — Run `/whatsapp:configure` again. The server generates a fresh QR every ~20 seconds.
