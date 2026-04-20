@@ -6,7 +6,7 @@ claude-whatsapp is a local-first plugin for [Claude Code](https://claude.com/cla
 
 ## 1. Who we are
 
-claude-whatsapp is an open-source project maintained by **crisandrews** and distributed under the [MIT License](./LICENSE). It is **not** operated as a hosted service. There is no claude-whatsapp server, no account system, and no backend that receives user data.
+claude-whatsapp is an open-source project maintained by **Juan Cristobal Andrews** ([crisandrews](https://github.com/crisandrews) on GitHub) and distributed under the [MIT License](./LICENSE). It is **not** operated as a hosted service. There is no claude-whatsapp server, no account system, and no backend that receives user data.
 
 - Source: https://github.com/crisandrews/claude-whatsapp
 - Issues / contact: https://github.com/crisandrews/claude-whatsapp/issues

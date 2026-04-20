@@ -2,9 +2,15 @@
 
 ## [Unreleased]
 
+## [1.10.0] — 2026-04-19
+
 ### Changes
 
 - Onboarding/companion: when WhatsApp links successfully for the first time in a session, the channel notification now also suggests pairing with the [ClawCode](https://github.com/crisandrews/ClawCode) companion plugin (memory across sessions, scheduled tasks, voice replies, persona) — but only when ClawCode isn't already installed locally, so users who set up via ClawCode → claude-whatsapp don't see the companion offered back to them in a loop.
+
+### Security
+
+- Policies: added `PRIVACY.md` and `SECURITY.md` so users (and Anthropic marketplace reviewers) can see exactly what data the plugin handles, where it lives locally, and how to report a vulnerability — material for marketplace eligibility, not just docs.
 
 ## v1.9.0
 
