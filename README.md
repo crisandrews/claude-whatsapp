@@ -37,6 +37,7 @@ This plugin fills that gap. It connects your WhatsApp number directly to Claude 
 - **[Voice transcription](#voice-transcription-optional)** — local Whisper, no API keys, 99+ languages.
 - **[Media pipeline](#media)** — inbound images, audio, video, and documents auto-downloaded for Claude to read.
 - **[Reply shaping](#reply-shaping)** — paragraph-aware chunking, optional ack reaction, auto-document for long replies, message editing without push notifications.
+- **[Inbound debouncing](#inbound-debouncing)** — rapid-fire texts from the same sender are batched into a single agent turn, so Claude stops answering mid-thought when the user is still typing.
 - **[Autonomous mode + web browsing](#autonomous-mode--web-browsing)** — combine with `--chrome` for a fully agentic WhatsApp assistant.
 - **[Always-on](#always-on-run-as-a-background-service)** — launchd, systemd, or Task Scheduler recipes included.
 - **[Multiple agents](#multiple-agents)** — run separate numbers from separate folders, each isolated.
@@ -121,7 +122,7 @@ In-depth guides, each with worked examples end-to-end. The README is the at-a-gl
 
 **Runtime reference**
 
-- **[docs/configuration.md](docs/configuration.md)** — every `/whatsapp:configure` sub-command (linking, audio, reply shaping, auth migration, reset) and every key in `config.json`.
+- **[docs/configuration.md](docs/configuration.md)** — every `/whatsapp:configure` sub-command (linking, audio, reply shaping, inbound debouncing, auth migration, reset) and every key in `config.json`.
 - **[docs/tools.md](docs/tools.md)** — per-tool reference (`reply`, `react`, `search_messages`, `fetch_history`, …) with natural-language examples and pitfalls.
 - **[docs/permission-relay.md](docs/permission-relay.md)** — how Claude Code's permission prompts reach your phone, how to respond from text or reaction.
 - **[docs/media-voice.md](docs/media-voice.md)** — inbound media runtime: layout, the 50 MB cap, the `inbox/` sandbox, voice transcription end-to-end, stickers / locations / contacts.
@@ -239,6 +240,14 @@ Several knobs control how Claude's outbound messages look on WhatsApp. All set v
 | `document threshold 4000` | Send replies above N chars as a single `.md` / `.txt` attachment instead of many chunked messages |
 | `document threshold off` | Always chunk, never auto-document |
 | `document format md` / `txt` / `auto` | Force the auto-document filename / MIME (default `auto` picks based on content) |
+
+### [Inbound debouncing](#inbound-debouncing)
+
+> *Deep dive with worked examples: [docs/configuration.md#inbound-debouncing](docs/configuration.md#inbound-debouncing).*
+
+When a user fires several plain-text messages in quick succession ("hi" → "actually" → "can you…"), the plugin holds them in a 2-second sliding window per `(chat, sender)` and hands the whole batch to Claude as one agent turn — so Claude doesn't start answering the first message while the user is still composing. Attachments, voice notes, reactions, and permission replies bypass the buffer and flush any pending text first so ordering is preserved.
+
+Tune via `inboundDebounceMs` in `config.json` (default `2000`; set to `0` to disable and get the pre-1.12 one-message-one-turn behavior).
 
 ### [Media](#media)
 
