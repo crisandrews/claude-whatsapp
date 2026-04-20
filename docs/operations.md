@@ -233,15 +233,14 @@ Every delivered inbound and every outbound reply is appended to two files per da
 {"ts":"2026-04-19T14:22:58.000Z","direction":"out","user":"Claude","text":"Hi! How can I help?","chat_id":"5491155556666@s.whatsapp.net"}
 ```
 
-**Markdown** — the same traffic rendered as a transcript:
+**Markdown** — the same traffic rendered as a transcript, in the WhatsApp chat-export format:
 
 ```
-**← Juan** (14:22:31): Hello
-
-**→ Claude** (14:22:58): Hi! How can I help?
+[19-04-26, 2:22:31 p.m.] ~Juan: Hello
+[19-04-26, 2:22:58 p.m.] Claude: Hi! How can I help?
 ```
 
-Arrows: `←` inbound, `→` outbound. Timestamps are UTC in the JSONL, `HH:MM:SS` local in the markdown header.
+Inbound senders are prefixed with `~` to match the WhatsApp-export convention for non-saved contacts (the plugin has no contact book, so every inbound push name is treated as unsaved). Outbound lines use the plain label (`Claude`). Timestamps are UTC in the JSONL and host-local time in the markdown, using the Spanish 12-hour notation (`a.m.`/`p.m.`). Message bodies preserve newlines verbatim — a continuation line has no `[timestamp]` prefix, which is how the format is parsed back.
 
 These files are append-only; the plugin doesn't rotate or delete them. For long-running installs, consider a periodic job that archives files older than N days (a simple `find logs/conversations -name "*.jsonl" -mtime +30 -exec gzip {} \;` is often enough).
 

@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [1.11.0] — 2026-04-19
+
+### Added
+
+- Session-start banner: on each Claude Code session start, the plugin now shows a one-line install card with its version and repo link, then stays quiet for the rest of the session. Suppressed when ClawCode is installed on the same machine so the two plugins don't both greet on boot (same cache-directory probe as `isClawCodeInstalled()` in server.ts).
+
+### Changed
+
+- **Breaking (markdown log format):** daily conversation transcripts at `<channel-dir>/logs/conversations/YYYY-MM-DD.md` now use the WhatsApp chat-export format (`[DD-MM-YY, H:MM:SS a.m.] ~Sender: text`) instead of the previous bold/arrow format (`**← Sender** (HH:MM:SS): text`), so the files drop straight into any tool that already parses WhatsApp exports. Inbound senders are prefixed with `~` per the export convention; outbound stays plain. Times are now host-local (the old format accidentally slotted UTC into a field documented as local — this is a fix). The sibling `.jsonl` is unchanged and remains the authoritative structured record, so any tooling reading JSONL is unaffected.
+
 ## [1.10.0] — 2026-04-19
 
 ### Changes

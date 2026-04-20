@@ -156,17 +156,30 @@ function syslog(msg: string) {
   process.stderr.write(`whatsapp: ${msg}\n`)
 }
 
+function formatWhatsappExportTimestamp(d: Date): string {
+  const dd = String(d.getDate()).padStart(2, '0')
+  const mm = String(d.getMonth() + 1).padStart(2, '0')
+  const yy = String(d.getFullYear() % 100).padStart(2, '0')
+  const h24 = d.getHours()
+  const h12 = h24 % 12 === 0 ? 12 : h24 % 12
+  const mi = String(d.getMinutes()).padStart(2, '0')
+  const ss = String(d.getSeconds()).padStart(2, '0')
+  const suffix = h24 < 12 ? 'a.m.' : 'p.m.'
+  return `[${dd}-${mm}-${yy}, ${h12}:${mi}:${ss} ${suffix}]`
+}
+
 function logConversation(direction: 'in' | 'out', user: string, text: string, meta?: Record<string, string>) {
-  const ts = new Date().toISOString()
+  const now = new Date()
+  const ts = now.toISOString()
   const date = ts.slice(0, 10) // YYYY-MM-DD
 
   // JSONL
   const jsonLine = JSON.stringify({ ts, direction, user, text, ...meta }) + '\n'
   try { fs.appendFileSync(path.join(CONV_LOGS_DIR, `${date}.jsonl`), jsonLine) } catch {}
 
-  // Markdown
-  const arrow = direction === 'in' ? '←' : '→'
-  const mdLine = `**${arrow} ${user}** (${ts.slice(11, 19)}): ${text}\n\n`
+  // Markdown — WhatsApp export style: [DD-MM-YY, H:MM:SS a.m.] Sender: text
+  const sender = direction === 'in' ? `~${user}` : user
+  const mdLine = `${formatWhatsappExportTimestamp(now)} ${sender}: ${text}\n`
   try { fs.appendFileSync(path.join(CONV_LOGS_DIR, `${date}.md`), mdLine) } catch {}
 }
 
