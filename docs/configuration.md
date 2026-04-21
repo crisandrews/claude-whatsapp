@@ -248,10 +248,11 @@ Field reference (all top-level, no nesting):
 
 | Key | Type | Description |
 |---|---|---|
-| `audioTranscription` | boolean | Enable local Whisper transcription for inbound voice notes. |
+| `audioTranscription` | boolean | Enable transcription for inbound voice notes. |
 | `audioLanguage` | string \| null | ISO 639-1 code (e.g. `"es"`, `"en"`). `null` = auto-detect. |
-| `audioModel` | `"tiny"` \| `"base"` \| `"small"` | Whisper model size. Default: `"base"`. |
-| `audioQuality` | `"fast"` \| `"balanced"` \| `"best"` | Decoding parameters. Default: `"balanced"`. |
+| `audioModel` | `"tiny"` \| `"base"` \| `"small"` | Whisper model size (local provider only). Default: `"base"`. |
+| `audioQuality` | `"fast"` \| `"balanced"` \| `"best"` | Decoding parameters (local provider only). Default: `"balanced"`. |
+| `audioProvider` | `"local"` \| `"groq"` \| `"openai"` | Transcription backend. `"local"` (default) uses bundled Whisper, no key, audio stays on the machine. `"groq"` and `"openai"` send the audio file to the named cloud API and need `GROQ_API_KEY` / `OPENAI_API_KEY` env vars. Cloud failures fall back to local automatically. |
 | `chunkMode` | `"length"` \| `"newline"` | How long replies are split. Default: `"length"`. |
 | `replyToMode` | `"off"` \| `"first"` \| `"all"` | Which chunks quote-reply the original. Default: `"first"`. |
 | `ackReaction` | string \| undefined | Emoji posted on inbound from allowlisted contacts. Undefined = disabled. |

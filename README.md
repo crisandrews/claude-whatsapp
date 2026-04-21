@@ -33,7 +33,7 @@ This plugin fills that gap. It connects your WhatsApp number directly to Claude 
 - **[Native WhatsApp channel](#quick-setup)** — scan a QR (or use a pairing code on headless servers), pair your contacts, start chatting with Claude.
 - **[Access control](#access-control)** — pairing codes, allowlist, group gating with `requireMention`. Nobody talks to your agent without permission.
 - **[Permission relay](#permission-requests-over-whatsapp)** — when Claude wants to run a tool, get the prompt on WhatsApp; approve or deny with a 👍 reaction or `yes <id>` reply.
-- **[Local search and export](#search-history-and-export)** — every message indexed locally; full-text search, request older messages from WhatsApp, dump chats to markdown / jsonl / csv.
+- **[Local search, export, and discovery](#search-history-and-export)** — every message indexed locally; full-text search, contact and chat discovery, message-context lookup, request older messages from WhatsApp, dump chats to markdown / jsonl / csv.
 - **[Voice transcription](#voice-transcription-optional)** — local Whisper, no API keys, 99+ languages.
 - **[Media pipeline](#media)** — inbound images, audio, video, and documents auto-downloaded for Claude to read.
 - **[Reply shaping](#reply-shaping)** — paragraph-aware chunking, optional ack reaction, auto-document for long replies, message editing without push notifications.
@@ -149,7 +149,7 @@ In-depth guides, each with worked examples end-to-end. The README is the at-a-gl
 | `/whatsapp:access revoke <jid>` | Remove a user |
 | `/whatsapp:access policy <mode>` | Set DM policy: `pairing`, `allowlist`, or `disabled` |
 
-Default policy is `pairing`. IDs are WhatsApp JIDs — format depends on your Baileys version (e.g. `56912345678@s.whatsapp.net` or `199999598137448@lid`). Check `/whatsapp:access` to see the exact IDs.
+Default policy is `pairing`. IDs are WhatsApp JIDs — format depends on your Baileys version (e.g. `56912345678@s.whatsapp.net` or `12345678901234@lid`). Check `/whatsapp:access` to see the exact IDs.
 
 ### [Groups](#access-groups)
 
@@ -179,9 +179,15 @@ Default policy is `pairing`. IDs are WhatsApp JIDs — format depends on your Ba
 | `delete_message` | Revoke a message Claude sent. |
 | `send_poll` | Send a tappable poll with 2-12 options. |
 | `download_attachment` | Access downloaded media from the inbox. |
+| `list_chats` | Discover active conversations (DMs + groups) with last-message preview, filtered to the access allowlist. |
 | `search_messages` | Full-text search the local message store. |
+| `search_contact` | Find indexed contacts by name or phone-fragment across all allowlisted chats. |
+| `get_message_context` | Fetch N messages before + the anchor + N after — to read the surrounding thread of a search hit. |
 | `fetch_history` | Ask WhatsApp for older messages in a chat. |
-| `list_group_senders` | Participants who have spoken in a chat (from the local store). |
+| `list_group_senders` | Participants who have spoken in a chat (from the local store, with push names). |
+| `get_group_metadata` | Live group metadata: subject, description, settings, full participant list with admin flags. |
+| `check_number_exists` | Verify whether one or more phone numbers are registered on WhatsApp (batched). |
+| `get_business_profile` | Fetch WhatsApp Business profile (description, category, email, website, hours) for a user JID. |
 | `export_chat` | Dump a chat as `markdown`, `jsonl`, or `csv` under the inbox. |
 
 **What's NOT a plugin feature (yet)**
@@ -272,6 +278,8 @@ The Whisper model (~77MB for `base`) downloads on the first voice message and is
 Model size (`tiny` / `base` / `small`) and quality (`fast` / `balanced` / `best`) are configurable — full tradeoff tables in [docs/configuration.md#voice-transcription](docs/configuration.md#voice-transcription).
 
 Disable with `/whatsapp:configure audio off`.
+
+**Cloud provider option (advanced):** for higher-quality transcription on slower hardware, switch to Groq or OpenAI via `/whatsapp:configure audio provider` (requires `GROQ_API_KEY` or `OPENAI_API_KEY` env var). Local stays the default and recommendation; cloud failures fall back to local automatically. See [docs/media-voice.md#voice-transcription-end-to-end](docs/media-voice.md#voice-transcription-end-to-end) for the trade-offs.
 
 ## [Going further](#going-further)
 

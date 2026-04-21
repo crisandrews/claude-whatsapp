@@ -1,6 +1,6 @@
 # Privacy Policy
 
-_Last updated: 2026-04-19_
+_Last updated: 2026-04-20_
 
 claude-whatsapp is a local-first plugin for [Claude Code](https://claude.com/claude-code) that bridges your WhatsApp number to a Claude agent. It runs entirely on the user's machine. This document explains what data the plugin handles, where it is stored, and which third-party services it contacts.
 
@@ -58,10 +58,14 @@ The plugin can integrate with additional services, but **only when the user expl
 
 | Feature | Provider | When it activates | Data sent |
 |---|---|---|---|
-| Local voice transcription | Hugging Face (model download) | First voice message after `/whatsapp:configure audio <lang>` | None at runtime; the Whisper model file is downloaded once from Hugging Face's CDN, then cached locally and used offline. |
+| Local voice transcription (default) | Hugging Face (model download) | First voice message after `/whatsapp:configure audio <lang>` while `audioProvider` is `"local"` | None at runtime; the Whisper model file is downloaded once from Hugging Face's CDN, then cached locally and used offline. The audio itself never leaves the machine. |
+| Cloud voice transcription — Groq (opt-in) | Groq (`api.groq.com`) | Each inbound voice note while `audioProvider` is `"groq"` and `GROQ_API_KEY` is set | The raw OGG/Opus audio file (typically a few KB to ~1 MB per voice note) is uploaded to Groq's `/audio/transcriptions` endpoint along with the configured language code. The transcript is returned in the response. Audio handling on the Groq side is governed by [Groq's privacy policy](https://groq.com/privacy). |
+| Cloud voice transcription — OpenAI (opt-in) | OpenAI (`api.openai.com`) | Each inbound voice note while `audioProvider` is `"openai"` and `OPENAI_API_KEY` is set | Same as above against OpenAI's `/audio/transcriptions` endpoint with the `whisper-1` model. Governed by [OpenAI's privacy policy](https://openai.com/policies/privacy-policy). |
 | Permission relay | Claude Code (host process) | When Claude Code emits a `permission_request` notification | The plugin relays the prompt to the user's allowlisted DM contacts via WhatsApp. The decision (`allow` / `deny`) is sent back to Claude Code locally. |
 
-The plugin itself does **not** integrate with cloud STT, cloud TTS, or analytics services. Speech-to-text is performed locally via the bundled `@huggingface/transformers` runtime against an ONNX-quantized Whisper model. There is no cloud Whisper, no OpenAI fallback, no Google fallback.
+The cloud transcription providers are strictly opt-in: the default is `"local"` and the user must explicitly run `/whatsapp:configure audio provider groq` (or `openai`) and set the matching API key in their shell environment for any audio to be uploaded. Speech-to-text otherwise runs locally via the bundled `@huggingface/transformers` runtime against an ONNX-quantized Whisper model.
+
+If a cloud transcription request fails (missing key, network error, rate limit, auth error), the plugin falls back to local Whisper for that message — so a transient cloud outage doesn't push audio anywhere unexpected. The fallback is logged to `logs/system.log`.
 
 ## 5. Auth credentials
 

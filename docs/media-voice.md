@@ -87,14 +87,34 @@ What's *not* sandboxed: the normal Read tool. If Claude reads a file from anywhe
 
 ## Voice transcription end-to-end
 
-A fully-local pipeline (Whisper via `@huggingface/transformers`) transcribes inbound voice notes. No API keys, no cloud.
+Inbound voice notes can be transcribed by one of three providers. The default is a fully-local Whisper pipeline (via `@huggingface/transformers`); the other two are opt-in cloud APIs.
+
+### Providers
+
+| Provider | Where it runs | Cost | Privacy | When to pick it |
+|---|---|---|---|---|
+| `local` (default) | Bundled Whisper on your machine, ONNX-quantized | Free | Audio never leaves the device | Default. Almost everyone wants this. |
+| `groq` | api.groq.com — Whisper Large v3 Turbo | ~$0.006 / min audio | Audio uploaded to Groq's API | When local is too slow on your hardware or you need the higher-quality larger model. |
+| `openai` | api.openai.com — Whisper-1 | ~$0.006 / min audio | Audio uploaded to OpenAI's API | When you already have an OpenAI key set up and want comparable quality to Groq through the same vendor as the rest of your stack. |
+
+Pick a provider with `/whatsapp:configure audio provider`. The cloud options each require an environment variable: `GROQ_API_KEY` for Groq, `OPENAI_API_KEY` for OpenAI. Set the env var before starting the server (or before the next reload).
+
+**Automatic fallback to local.** If you've selected `groq` or `openai` and a transcription request fails — missing key, network blip, rate limit, auth error — the plugin loads local Whisper on demand and retries with it, then keeps that local pipeline warm for the rest of the session. You never lose a transcription to a cloud failure. Each fallback is logged to `logs/system.log` so you can tell whether your cloud provider is reliable.
 
 ### Enabling
 
-One line:
+One line to enable local transcription with a language hint:
 
 ```
 /whatsapp:configure audio es
+```
+
+To switch providers later:
+
+```
+/whatsapp:configure audio provider groq
+/whatsapp:configure audio provider openai
+/whatsapp:configure audio provider local
 ```
 
 Full command reference — model sizes, quality levels, supported languages (99+), how to switch or disable — in [docs/configuration.md#voice-transcription](configuration.md#voice-transcription). This doc covers what happens *after* you've enabled it.
@@ -146,7 +166,9 @@ Switch model size or quality via `/whatsapp:configure audio model small` / `audi
 
 ### Privacy
 
-All transcription runs locally in the same Node process as the server. No message text or audio leaves your machine during transcription. The only network traffic is the model download (from `huggingface.co`) on first use.
+With `audioProvider: "local"` (default), all transcription runs in-process inside the same Node server. No message text or audio leaves your machine during transcription. The only network traffic is the model download (from `huggingface.co`) on first use.
+
+With `audioProvider: "groq"` or `"openai"`, the raw OGG/Opus audio file is uploaded to the chosen provider's transcription endpoint (`api.groq.com` or `api.openai.com`) using the corresponding API key from the environment. The transcript is returned and used in place of the local Whisper output. Audio handling, retention, and any logging on the provider side are governed by that provider's own privacy policy — see https://groq.com/privacy and https://openai.com/policies/privacy-policy. The plugin only uploads audio when an inbound voice note arrives and transcription is enabled; it never proactively uploads inbox files or other media.
 
 ---
 

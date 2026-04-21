@@ -54,7 +54,7 @@ All access state lives in `$STATE_DIR/access.json`. Default when missing:
 | Field | Type | Description |
 |-------|------|-------------|
 | `dmPolicy` | `"pairing"` \| `"allowlist"` \| `"disabled"` | How to handle DMs from unknown senders |
-| `allowFrom` | `string[]` | Allowed sender JIDs (e.g. `"56912345678@s.whatsapp.net"` or `"199999598137448@lid"`) |
+| `allowFrom` | `string[]` | Allowed sender JIDs (e.g. `"56912345678@s.whatsapp.net"` or `"12345678901234@lid"`) |
 | `groups` | `Record<string, {requireMention, allowFrom}>` | Group configurations |
 | `pending` | `Record<string, PendingEntry>` | Pending pairing codes |
 

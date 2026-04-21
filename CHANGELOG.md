@@ -2,6 +2,26 @@
 
 ## [Unreleased]
 
+## [1.13.0] — 2026-04-21
+
+### Added
+
+- New MCP tool `search_contact` — searches indexed contacts across all allowlisted chats by substring of push name or JID. Pure SQLite over `messages.db`, access-filtered. Returns matching senders grouped by JID with their latest push name, chat count, message count, and last-seen timestamp. Closes a common gap: users can now ask *"¿tengo algún Juan?"* or *"¿quién es +549155?"* without knowing the exact JID.
+- New MCP tool `get_business_profile` — fetches WhatsApp Business profile fields (description, category, email, website, address, hours) for a user JID via Baileys' `getBusinessProfile`. Returns a clear "no business profile" response for personal accounts rather than erroring. No access gate (public-ish lookup). Chain with `check_number_exists` when only a phone is known.
+- New MCP tool `get_group_metadata` — fetches full group metadata via Baileys' `groupMetadata` API (subject, description, creation info, settings, participants with admin flags). Access-checked: only works for groups in the `access.groups` allowlist. Complements `list_group_senders`: this tool lists ALL current participants (live from WhatsApp) with admin status, while `list_group_senders` lists only those who have spoken (from SQLite, with push names).
+- New MCP tool `check_number_exists` — verifies whether one or more phone numbers are registered on WhatsApp via Baileys' `onWhatsApp` API. Batched up to 50 per call, with phone normalization (strips `+`, spaces, parentheses, hyphens; enforces 7–15 digits). Returns the canonical JID for active numbers (plus LID when available) and an explicit "not on WhatsApp" line per inactive one. Useful as pre-flight validation before pairing, sending, or answering "is X on WhatsApp?".
+- New MCP tool `get_message_context` — returns N messages before + the anchor message + N messages after, all from the same chat, in chronological order. Pure SQLite query, access-checked on the anchor's chat. Lets the agent hand a `search_messages` hit (or any indexed message ID) into this tool to understand the surrounding thread before responding. Default window is 5 before and 5 after, clamped to 50 each.
+- New MCP tool `list_chats` — lists recent WhatsApp chats (DMs + groups) with last message preview, timestamp, and message count. Filtered to the access allowlist so the agent never enumerates non-permitted chats. Backed by the existing `messages.db` SQLite store with no additional persistence. Enables discovery queries like *"what chats do I have"* / *"who's been messaging me"* without the user needing to know a specific JID, and lets the agent extract `chat_id`s before calling per-chat tools (`export_chat`, `fetch_history`, `list_group_senders`).
+- Voice transcription provider switch: a new `audioProvider` field in `config.json` (`"local"` default, `"groq"`, or `"openai"`) lets users opt into a cloud transcription backend instead of the bundled local Whisper. Cloud providers use the OpenAI-compatible audio endpoint (`whisper-large-v3-turbo` for Groq, `whisper-1` for OpenAI) and read the API key from `GROQ_API_KEY` / `OPENAI_API_KEY` env vars (never stored in `config.json`). Local stays the default and recommendation — picking cloud trades privacy for higher transcription quality and lower latency on slower hardware. Switch via `/whatsapp:configure audio provider [local|groq|openai]`. If a cloud call fails (missing key, network error, rate limit, auth), the plugin lazy-loads local Whisper as a fallback so no transcription is ever lost; each fallback is recorded in `logs/system.log`. `transcriber-status.json` now also exposes a `provider` field so companion plugins can tell which backend is active.
+
+### Fixed
+
+- Privacy: replaced a real-looking example `@lid` JID in `README.md`, `skills/access/SKILL.md` and `docs/access.md` with a clearly-synthetic placeholder (`12345678901234@lid`, matching `lib.test.ts`). The previous value was authentic-format and should not have been committed.
+- Hardening: the bot's own JID (LID or PN) can no longer land in `access.json.pending` under any Baileys edge case. `gate()` now short-circuits pairing for the bot's own identity using both `sock.user.id` (PN) and `sock.user.lid` (LID). A startup sanity-purge also strips any legacy owner entries from `pending` and `allowFrom` if found.
+- Onboarding: `/whatsapp:configure`'s `connected` branch now uses MUST-level language so the ClawCode invite and voice-transcription tip reliably re-surface when their conditions hold.
+- Onboarding: `/whatsapp:configure`'s QR vs pairing-code prompt now explicitly requires invoking `AskUserQuestion` — previously some sessions rendered the options as a numbered chat message instead.
+- Onboarding: the "WhatsApp is ready to connect" channel notification is now debounced per link cycle instead of re-firing on every ~20s QR refresh, eliminating the "Waiting." loop.
+
 ## [1.12.0] — 2026-04-20
 
 ### Added

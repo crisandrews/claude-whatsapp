@@ -202,7 +202,7 @@ Since Baileys v7, the same user can show up under two formats:
 | Format | When you'll see it |
 |---|---|
 | `5491155556666@s.whatsapp.net` | The "classic" phone-based JID. Used in DMs and older group messages. |
-| `199999598137448@lid` | Opaque per-conversation identifier introduced in newer WhatsApp clients. Common in groups with mixed clients. |
+| `12345678901234@lid` | Opaque per-conversation identifier introduced in newer WhatsApp clients. Common in groups with mixed clients. |
 
 Both can coexist in the same `allowFrom` list without conflict. The plugin's gate checks `allowFrom` in both directions (sender and chat), so if you allow the `@s.whatsapp.net` form and the client later sends under `@lid`, delivery still works — the first couple of messages may drop while the LID↔phone cache fills, and then mention detection works normally (see [docs/groups.md#edge-cases--gotchas](groups.md#edge-cases--gotchas)).
 

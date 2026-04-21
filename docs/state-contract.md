@@ -102,6 +102,7 @@ All plugin configuration — flat schema, no nested objects.
   "audioLanguage": "es",
   "audioModel": "base",
   "audioQuality": "balanced",
+  "audioProvider": "local",
   "chunkMode": "newline",
   "replyToMode": "first",
   "ackReaction": "👀",
@@ -115,8 +116,9 @@ All plugin configuration — flat schema, no nested objects.
 |---|---|---|
 | `audioTranscription` | boolean | `false` |
 | `audioLanguage` | ISO 639-1 string or `null` | `null` (auto-detect) |
-| `audioModel` | `"tiny" \| "base" \| "small"` | `"base"` |
-| `audioQuality` | `"fast" \| "balanced" \| "best"` | `"balanced"` |
+| `audioModel` | `"tiny" \| "base" \| "small"` | `"base"` (local provider only) |
+| `audioQuality` | `"fast" \| "balanced" \| "best"` | `"balanced"` (local provider only) |
+| `audioProvider` | `"local" \| "groq" \| "openai"` | `"local"` — `groq` / `openai` require the matching `GROQ_API_KEY` / `OPENAI_API_KEY` env var |
 | `chunkMode` | `"length" \| "newline"` | `"length"` |
 | `replyToMode` | `"off" \| "first" \| "all"` | `"first"` |
 | `ackReaction` | string or undefined | undefined (disabled) |
@@ -128,19 +130,21 @@ Companions can read this to know whether voice transcription is on, or to adapt 
 
 ### `transcriber-status.json`
 
-Live state of the local Whisper transcriber.
+Live state of the transcriber (whatever provider is active).
 
 ```json
-{"status": "ready", "ts": 1713543215000}
+{"status": "ready", "provider": "local", "ts": 1713543215000}
 ```
 
 `status` is one of:
 
 | Value | Meaning |
 |---|---|
-| `loading` | Model is downloading / warming up. |
+| `loading` | Model is downloading / warming up (local) or provider is being validated (cloud). |
 | `ready` | Transcription pipeline is live. |
 | `error` | Initialization failed; the transcriber is disabled until the next launch or config change. The `error` field holds the message. |
+
+The `provider` field (added alongside cloud transcription support) reports which backend was last initialized: `"local"`, `"groq"`, or `"openai"`. Older snapshots written before this field existed will not include it; treat absence as `"local"`.
 
 > ⚠️ The plugin never writes `"disabled"` as a status value. When voice transcription is turned off, the plugin sets its transcriber to `null` internally but does **not** rewrite `transcriber-status.json`. Treat the authoritative "is it on?" signal as `config.json`'s `audioTranscription: true`, not this file's contents. The file tells you whether the transcriber was last able to load, not whether it's currently enabled.
 

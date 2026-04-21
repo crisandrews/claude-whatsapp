@@ -27,9 +27,13 @@ import {
   getOldestMessage,
   getChatSenders,
   countMessages,
+  listChats,
+  getMessageContext,
+  searchContacts,
   formatExport,
   closeDb,
   type ExportFormat,
+  type MessageRow,
 } from './db.js'
 
 // ---------------------------------------------------------------------------
@@ -272,6 +276,7 @@ function assertSendable(filePath: string): void {
 // is the phone JID).
 function matchesBot(jid: string | null | undefined): boolean {
   if (matchesBotImpl(jid, botJidLocal, botJidNamespace)) return true
+  if (matchesBotImpl(jid, botJidLocalAlt, botJidNamespaceAlt)) return true
   // Cross-namespace fallback: bot is in phone namespace, mention is in LID.
   // Resolve via cache populated from per-message Alt fields.
   if (jid && botJidNamespace && botJidNamespace !== 'lid') {
@@ -294,6 +299,10 @@ interface PluginConfig {
   audioLanguage?: string | null
   audioModel?: 'tiny' | 'base' | 'small'   // default: base
   audioQuality?: 'fast' | 'balanced' | 'best' // default: balanced
+  // Transcription provider. 'local' uses bundled Whisper (default, free, private).
+  // 'groq' and 'openai' call a third-party cloud API — faster/higher quality but
+  // send the audio outside the machine and require GROQ_API_KEY / OPENAI_API_KEY.
+  audioProvider?: 'local' | 'groq' | 'openai'
 
   // Outbound message shaping (Sprint 1)
   chunkMode?: ChunkMode                     // default: 'length' (preserves prior behavior)
@@ -319,98 +328,197 @@ function loadConfig(): PluginConfig {
   }
 }
 
-let transcriber: { transcribe: (buffer: Buffer) => Promise<string> } | null = null
+type TranscribeFn = (buffer: Buffer) => Promise<string>
+type AudioProvider = 'local' | 'groq' | 'openai'
+
+let transcriber: { transcribe: TranscribeFn } | null = null
+let activeProvider: AudioProvider = 'local'
+let primaryFn: TranscribeFn | null = null
+// Local Whisper, lazy-loaded on the first cloud failure so a user who picks a
+// cloud provider doesn't pay the ~77 MB + 5–10 s model load up front.
+let localFallbackFn: TranscribeFn | null = null
+
 const TRANSCRIBER_STATUS_FILE = path.join(CHANNEL_DIR, 'transcriber-status.json')
 
-function writeTranscriberStatus(status: 'loading' | 'ready' | 'error' | 'disabled', error?: string) {
-  try { fs.writeFileSync(TRANSCRIBER_STATUS_FILE, JSON.stringify({ status, error, ts: Date.now() })) } catch {}
+function writeTranscriberStatus(
+  status: 'loading' | 'ready' | 'error' | 'disabled',
+  error?: string,
+  provider?: AudioProvider,
+) {
+  try {
+    fs.writeFileSync(
+      TRANSCRIBER_STATUS_FILE,
+      JSON.stringify({ status, error, provider, ts: Date.now() }),
+    )
+  } catch {}
+}
+
+async function makeLocalTranscribeFn(config: PluginConfig): Promise<TranscribeFn> {
+  const { pipeline } = await import('@huggingface/transformers')
+  const { OggOpusDecoder } = await import('ogg-opus-decoder')
+
+  const modelSize = config.audioModel || 'base'
+  const quality = config.audioQuality || 'balanced'
+  const dtype = quality === 'best' ? 'fp32' : 'q8'
+  syslog(`loading whisper-${modelSize} (quality: ${quality}, dtype: ${dtype})`)
+
+  const whisperPipeline = await pipeline(
+    'automatic-speech-recognition',
+    `onnx-community/whisper-${modelSize}`,
+    { dtype } as any,
+  )
+
+  const decoder = new OggOpusDecoder()
+  await decoder.ready
+
+  return async (buffer: Buffer): Promise<string> => {
+    const decoded = await decoder.decode(new Uint8Array(buffer))
+
+    let allSamples: Float32Array
+    const ch = decoded.channelData
+    if (!ch || !ch[0] || decoded.samplesDecoded === 0) {
+      throw new Error('Failed to decode audio')
+    }
+    allSamples = ch[0]
+
+    await decoder.reset()
+
+    const sampleRate = decoded.sampleRate
+    if (sampleRate !== 16000) {
+      const ratio = 16000 / sampleRate
+      const newLength = Math.round(allSamples.length * ratio)
+      const resampled = new Float32Array(newLength)
+      for (let i = 0; i < newLength; i++) {
+        const srcIdx = i / ratio
+        const idx = Math.floor(srcIdx)
+        const frac = srcIdx - idx
+        resampled[i] =
+          idx + 1 < allSamples.length
+            ? allSamples[idx] * (1 - frac) + allSamples[idx + 1] * frac
+            : allSamples[idx]
+      }
+      allSamples = resampled
+    }
+
+    const cfg = loadConfig()
+    const lang = cfg.audioLanguage || null
+    const q = cfg.audioQuality || 'balanced'
+    const result = await whisperPipeline(allSamples, {
+      language: lang,
+      task: 'transcribe',
+      chunk_length_s: 30,
+      stride_length_s: 5,
+      ...(q === 'best' ? { num_beams: 5 } : {}),
+    } as any)
+
+    const text = Array.isArray(result)
+      ? result.map((r: any) => r.text || '').join(' ')
+      : (result as any)?.text || ''
+    return text.trim() || '[Transcription empty]'
+  }
+}
+
+function makeCloudTranscribeFn(provider: 'groq' | 'openai'): TranscribeFn {
+  const envVar = provider === 'groq' ? 'GROQ_API_KEY' : 'OPENAI_API_KEY'
+  const url =
+    provider === 'groq'
+      ? 'https://api.groq.com/openai/v1/audio/transcriptions'
+      : 'https://api.openai.com/v1/audio/transcriptions'
+  const model = provider === 'groq' ? 'whisper-large-v3-turbo' : 'whisper-1'
+
+  return async (buffer: Buffer): Promise<string> => {
+    const apiKey = process.env[envVar]
+    if (!apiKey) throw new Error(`${envVar} env var not set`)
+
+    const cfg = loadConfig()
+    const lang = cfg.audioLanguage || undefined
+
+    const form = new FormData()
+    form.append('file', new Blob([buffer], { type: 'audio/ogg' }), 'audio.ogg')
+    form.append('model', model)
+    if (lang) form.append('language', lang)
+    form.append('response_format', 'json')
+
+    const start = Date.now()
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${apiKey}` },
+      body: form,
+    })
+    const latency = Date.now() - start
+
+    if (!resp.ok) {
+      const errText = await resp.text().catch(() => '<no body>')
+      throw new Error(`${provider} HTTP ${resp.status} (${latency}ms): ${errText.slice(0, 200)}`)
+    }
+    const data = (await resp.json()) as { text?: string }
+    const text = (data.text || '').trim()
+    syslog(`${provider} transcribed ${(buffer.length / 1024).toFixed(1)} KB in ${latency}ms`)
+    return text || '[Transcription empty]'
+  }
 }
 
 async function initTranscriber() {
   const config = loadConfig()
-  if (!config.audioTranscription) return
+  if (!config.audioTranscription) {
+    transcriber = null
+    primaryFn = null
+    localFallbackFn = null
+    return
+  }
+
+  const provider: AudioProvider = config.audioProvider || 'local'
+  activeProvider = provider
+  localFallbackFn = null
 
   try {
-    writeTranscriberStatus('loading')
-    process.stderr.write('whatsapp channel: loading Whisper model...\n')
+    writeTranscriberStatus('loading', undefined, provider)
+    process.stderr.write(`whatsapp channel: initializing transcription provider: ${provider}\n`)
 
-    const { pipeline } = await import('@huggingface/transformers')
-    const { OggOpusDecoder } = await import('ogg-opus-decoder')
-
-    // Load whisper pipeline (uses cache if model was pre-downloaded by skill)
-    const modelSize = config.audioModel || 'base'
-    const quality = config.audioQuality || 'balanced'
-    const dtype = quality === 'best' ? 'fp32' : 'q8'
-    syslog(`loading whisper-${modelSize} (quality: ${quality}, dtype: ${dtype})`)
-
-    const whisperPipeline = await pipeline(
-      'automatic-speech-recognition',
-      `onnx-community/whisper-${modelSize}`,
-      { dtype },
-    )
-
-    const decoder = new OggOpusDecoder()
-    await decoder.ready
+    if (provider === 'local') {
+      primaryFn = await makeLocalTranscribeFn(config)
+    } else {
+      // Validate the key up-front so a mis-configured provider fails fast at
+      // boot, not mid-message.
+      const envVar = provider === 'groq' ? 'GROQ_API_KEY' : 'OPENAI_API_KEY'
+      if (!process.env[envVar]) {
+        throw new Error(
+          `${envVar} env var not set — required for cloud provider '${provider}'. ` +
+            `Set it in your shell environment before the server starts, or run ` +
+            `\`/whatsapp:configure audio provider local\` to switch back to local Whisper.`,
+        )
+      }
+      primaryFn = makeCloudTranscribeFn(provider)
+    }
 
     transcriber = {
       async transcribe(buffer: Buffer): Promise<string> {
-        // Decode entire ogg/opus file to PCM
-        const decoded = await decoder.decode(new Uint8Array(buffer))
-
-        // Collect all channel data (decode may return partial frames)
-        let allSamples: Float32Array
-        const ch = decoded.channelData
-        if (!ch || !ch[0] || decoded.samplesDecoded === 0) {
-          throw new Error('Failed to decode audio')
-        }
-        allSamples = ch[0]
-
-        // Free decoder resources for next call
-        await decoder.reset()
-
-        // Resample to 16kHz if needed
-        const sampleRate = decoded.sampleRate
-        if (sampleRate !== 16000) {
-          const ratio = 16000 / sampleRate
-          const newLength = Math.round(allSamples.length * ratio)
-          const resampled = new Float32Array(newLength)
-          for (let i = 0; i < newLength; i++) {
-            const srcIdx = i / ratio
-            const idx = Math.floor(srcIdx)
-            const frac = srcIdx - idx
-            resampled[i] =
-              idx + 1 < allSamples.length
-                ? allSamples[idx] * (1 - frac) + allSamples[idx + 1] * frac
-                : allSamples[idx]
+        try {
+          return await primaryFn!(buffer)
+        } catch (err) {
+          if (activeProvider === 'local') throw err
+          syslog(`${activeProvider} failed, falling back to local Whisper: ${err}`)
+          if (!localFallbackFn) {
+            syslog(`loading local Whisper as fallback (first ${activeProvider} failure)...`)
+            try {
+              localFallbackFn = await makeLocalTranscribeFn(loadConfig())
+            } catch (loadErr) {
+              syslog(`local fallback failed to load: ${loadErr}`)
+              throw err
+            }
           }
-          allSamples = resampled
+          return await localFallbackFn(buffer)
         }
-
-        const cfg = loadConfig()
-        const lang = cfg.audioLanguage || null
-        const q = cfg.audioQuality || 'balanced'
-        const result = await whisperPipeline(allSamples, {
-          language: lang,
-          task: 'transcribe',
-          chunk_length_s: 30,
-          stride_length_s: 5,
-          ...(q === 'best' ? { num_beams: 5 } : {}),
-        })
-
-        // Concatenate all chunks (Whisper may split long audio)
-        const text = Array.isArray(result)
-          ? result.map((r: any) => r.text || '').join(' ')
-          : (result as any)?.text || ''
-        return text.trim() || '[Transcription empty]'
       },
     }
 
-    writeTranscriberStatus('ready')
-    process.stderr.write('whatsapp channel: audio transcription ready\n')
+    writeTranscriberStatus('ready', undefined, provider)
+    process.stderr.write(`whatsapp channel: audio transcription ready (${provider})\n`)
   } catch (err) {
-    writeTranscriberStatus('error', String(err))
+    writeTranscriberStatus('error', String(err), provider)
     syslog(`audio transcription not available: ${err}`)
     transcriber = null
+    primaryFn = null
   }
 }
 
@@ -513,7 +621,12 @@ function gate(
 
   // DM from unknown sender
   if (access.dmPolicy === 'allowlist') return 'drop'
-  if (access.dmPolicy === 'pairing') return 'pair'
+  if (access.dmPolicy === 'pairing') {
+    // Never pair the owner with themselves. Their own JID can arrive on this
+    // path via cross-device sync / receipt echoes where fromMe is false.
+    if (matchesBot(senderId) || matchesBot(chatId)) return 'drop'
+    return 'pair'
+  }
 
   return 'drop'
 }
@@ -576,11 +689,24 @@ Important:
 // ---------------------------------------------------------------------------
 let sock: WASocket | null = null
 let firstConnectAnnounced = false
+// "WhatsApp is ready to connect" channel notification is announced once per
+// link cycle, not per QR rotation. Baileys refreshes the QR every ~20s and
+// without this gate Claude received a fresh system notification on every
+// refresh, which triggered a "Waiting." loop while the user was picking an
+// option. Reset on logout and on 'open' so the next fresh cycle announces.
+let qrReadyAnnounced = false
 // Bot's own identity, captured on connection.update 'open'. Used for group
 // mention gating — see matchesBot() and gate(). Both pieces parsed once so
 // the per-message hot path doesn't re-split.
 let botJidLocal: string | null = null
 let botJidNamespace: string | null = null
+// Alt identity. Baileys exposes `sock.user.id` (PN form) and `sock.user.lid`
+// (LID form). Capturing both lets matchesBot() reject the owner's own JID
+// even when the lidToPhone cache hasn't been populated yet (e.g. presence
+// or receipt echo right after pairing), so the owner can never land in
+// access.json.pending.
+let botJidLocalAlt: string | null = null
+let botJidNamespaceAlt: string | null = null
 
 // LID↔phone resolution cache. Baileys 7 introduced @lid identifiers (opaque
 // per-conversation IDs unrelated to phone numbers). When a message is
@@ -698,25 +824,29 @@ async function connectWhatsApp() {
           ...(pairingCode ? { pairingCode, pairingPhone: cfgPhone } : {}),
         })
 
-        // Notify the user to run /whatsapp:configure
-        try {
-          const content = pairingCode
-            ? `WhatsApp is ready to link. Tell the user to run /whatsapp:configure — a pairing code has been generated for +${cfgPhone}.`
-            : 'WhatsApp is ready to connect. Tell the user to run /whatsapp:configure to scan the QR code.'
-          mcp.notification({
-            method: 'notifications/claude/channel',
-            params: {
-              content,
-              meta: {
-                chat_id: 'system',
-                message_id: 'setup-' + Date.now(),
-                user: 'system',
-                user_id: 'system',
-                ts: new Date().toISOString(),
+        // Notify the user to run /whatsapp:configure. Debounced: one
+        // notification per link cycle, not per ~20s QR rotation.
+        if (!qrReadyAnnounced) {
+          qrReadyAnnounced = true
+          try {
+            const content = pairingCode
+              ? `WhatsApp is ready to link. Tell the user to run /whatsapp:configure — a pairing code has been generated for +${cfgPhone}.`
+              : 'WhatsApp is ready to connect. Tell the user to run /whatsapp:configure to scan the QR code.'
+            mcp.notification({
+              method: 'notifications/claude/channel',
+              params: {
+                content,
+                meta: {
+                  chat_id: 'system',
+                  message_id: 'setup-' + Date.now(),
+                  user: 'system',
+                  user_id: 'system',
+                  ts: new Date().toISOString(),
+                },
               },
-            },
-          })
-        } catch { /* first QR may fire before MCP is ready */ }
+            })
+          } catch { /* first QR may fire before MCP is ready */ }
+        }
       } catch {
         writeStatus('qr_error')
       }
@@ -751,6 +881,7 @@ async function connectWhatsApp() {
         fs.mkdirSync(AUTH_DIR, { recursive: true })
         // Re-pairing → next 'open' is a genuinely new session, re-announce.
         firstConnectAnnounced = false
+        qrReadyAnnounced = false
       }
     }
 
@@ -759,6 +890,7 @@ async function connectWhatsApp() {
       writeStatus('connected')
       syslog('WhatsApp connected successfully')
       lastConnectedAt = Date.now()
+      qrReadyAnnounced = false
 
       // Capture bot identity for group mention gating. Re-runs on every
       // reconnect so a logout+relogin under a different JID picks up cleanly.
@@ -768,6 +900,35 @@ async function connectWhatsApp() {
         botJidNamespace = parts.namespace
       } else {
         syslog(`could not parse bot JID from sock.user.id: ${sock?.user?.id}`)
+      }
+      const altParts = splitJid((sock as any)?.user?.lid)
+      if (altParts) {
+        botJidLocalAlt = altParts.local
+        botJidNamespaceAlt = altParts.namespace
+      }
+
+      // One-shot sanity purge: any pending/allowFrom entry matching the
+      // owner's own identity is a bug from prior versions (gate() now
+      // refuses to pair the owner with themselves, but legacy state files
+      // may still carry a stale entry). Strip silently, log once.
+      try {
+        const a = loadAccess()
+        let changed = false
+        for (const [code, e] of Object.entries(a.pending)) {
+          if (matchesBot(e.senderId) || matchesBot(e.chatId)) {
+            delete a.pending[code]
+            changed = true
+          }
+        }
+        const before = a.allowFrom.length
+        a.allowFrom = a.allowFrom.filter((j) => !matchesBot(j))
+        if (a.allowFrom.length !== before) changed = true
+        if (changed) {
+          saveAccess(a)
+          syslog('purged owner identity from access.json')
+        }
+      } catch (err) {
+        syslog(`owner-purge failed: ${err}`)
       }
 
       // Only push the "connected" channel notification on the FIRST successful
@@ -1417,11 +1578,23 @@ async function handleConfigChange() {
   if (configDebounce) clearTimeout(configDebounce)
   configDebounce = setTimeout(async () => {
     const config = loadConfig()
+    const desiredProvider: AudioProvider = config.audioProvider || 'local'
+
     if (config.audioTranscription && !transcriber) {
       await initTranscriber()
     } else if (!config.audioTranscription && transcriber) {
       transcriber = null
+      primaryFn = null
+      localFallbackFn = null
       process.stderr.write('whatsapp channel: audio transcription disabled\n')
+    } else if (config.audioTranscription && transcriber && desiredProvider !== activeProvider) {
+      process.stderr.write(
+        `whatsapp channel: switching transcription provider ${activeProvider} → ${desiredProvider}\n`,
+      )
+      transcriber = null
+      primaryFn = null
+      localFallbackFn = null
+      await initTranscriber()
     }
   }, 500)
 }
@@ -1754,6 +1927,79 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
           limit: { type: 'number', description: 'Max rows in the export (default 500, max 500)' },
         },
         required: ['chat_id'],
+      },
+    },
+    {
+      name: 'list_chats',
+      description: 'List recent WhatsApp chats (DMs + groups) with last message preview, timestamp, and message count. Use when the user asks about WhatsApp activity ("what chats do I have", "who has been messaging me", "summarize recent conversations"), when you need to find a specific chat by context hint, or BEFORE calling per-chat tools like `export_chat` / `fetch_history` to know which chat_id to pass. Results are filtered to the access allowlist, so non-permitted chats are never enumerated.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          limit: { type: 'number', description: 'Max chats to return. Default 50, clamped to 200.' },
+          offset: { type: 'number', description: 'Number of chats to skip before returning (for pagination). Default 0.' },
+        },
+      },
+    },
+    {
+      name: 'get_message_context',
+      description: 'Fetch the conversation context around a specific message: N messages before + the anchor message + N messages after, all from the same chat, in chronological order. Use when the user references a specific message (a `search_messages` hit, an inbound `message_id`, a reply target) and you need to understand the surrounding thread before responding. Pure SQLite — no WhatsApp roundtrip.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          message_id: { type: 'string', description: 'The anchor message ID. Typically from `search_messages` results, `fetch_history`, or `meta.message_id` of an inbound notification.' },
+          before: { type: 'number', description: 'Messages to fetch BEFORE the anchor. Default 5, clamped to 50.' },
+          after: { type: 'number', description: 'Messages to fetch AFTER the anchor. Default 5, clamped to 50.' },
+        },
+        required: ['message_id'],
+      },
+    },
+    {
+      name: 'check_number_exists',
+      description: 'Check whether one or more phone numbers are registered on WhatsApp. This is a pre-flight lookup via Baileys onWhatsApp — no message is sent, no chat is created. Returns existence plus the canonical JID per number. Use before calling `reply` with a chat_id constructed from a phone, before suggesting pairing, or when the user asks "is X on WhatsApp?". Accepts batches up to 50 numbers per call.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          phones: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Array of phone numbers to check in E.164 format. Both "+56912345678" and "56912345678" work — non-digit characters (spaces, parentheses, hyphens) are stripped. Max 50 per call.',
+          },
+        },
+        required: ['phones'],
+      },
+    },
+    {
+      name: 'get_group_metadata',
+      description: 'Fetch full WhatsApp group metadata via Baileys `groupMetadata`: subject, description, creation info, settings (restrict / announce / ephemeral), and the complete participant list with admin and super-admin flags. Use when the user asks about a group ("who is in X", "who are the admins", "when was it created"), before running group admin operations to verify current state, or to enumerate ALL participants (not just those who have spoken — use `list_group_senders` for that subset with push names).',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          chat_id: { type: 'string', description: 'Group JID ending in @g.us. Must be present in the access allowlist (access.groups). Add via /whatsapp:access group-add <jid>.' },
+        },
+        required: ['chat_id'],
+      },
+    },
+    {
+      name: 'get_business_profile',
+      description: 'Fetch the WhatsApp Business profile (description, category, email, website, address, hours) for a user JID via Baileys `getBusinessProfile`. Only works on user JIDs (`@s.whatsapp.net` or `@lid`), not groups. For personal accounts returns a clear "no business profile" message — not an error. Use when the user asks about a contact\'s business ("is this a business?", "what\'s their website?", "where are they?") or to route workflow by category.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          chat_id: { type: 'string', description: 'User JID ending in @s.whatsapp.net or @lid. Not a group JID. If only a phone is known, run check_number_exists first to get the canonical JID.' },
+        },
+        required: ['chat_id'],
+      },
+    },
+    {
+      name: 'search_contact',
+      description: 'Search indexed contacts across all allowlisted chats by substring of push name or JID. Pure SQLite query over messages.db — only finds people who have sent at least one indexed message. Returns matching senders grouped by JID, with their latest push name, how many chats they appear in, total messages, and last-seen timestamp. Use when the user asks "do I know a Juan?", "find contacts with +5491 prefix", or "who is this number?". Results are filtered to the access allowlist so senders from non-permitted chats are never surfaced.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          query: { type: 'string', description: 'Substring to search: name fragment ("juan") or phone/JID fragment ("+5491" or "5491155"). Case-insensitive.' },
+          limit: { type: 'number', description: 'Max results to return. Default 20, clamped to 100.' },
+        },
+        required: ['query'],
       },
     },
   ],
@@ -2119,6 +2365,263 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
           text: `Exported ${rows.length} of ${total} indexed messages from ${chat_id} as ${format} → ${filepath}`,
         }],
       }
+    }
+
+    case 'list_chats': {
+      if (!isDbReady()) {
+        return { content: [{ type: 'text', text: 'Local message store not available — list_chats disabled.' }] }
+      }
+      const rawLimit = (args as any).limit
+      const rawOffset = (args as any).offset
+      const limit = typeof rawLimit === 'number' && rawLimit > 0 ? Math.min(rawLimit, 200) : 50
+      const offset = typeof rawOffset === 'number' && rawOffset > 0 ? rawOffset : 0
+
+      const access = loadAccess()
+      const allowedIds: string[] = [...access.allowFrom, ...Object.keys(access.groups)]
+
+      if (allowedIds.length === 0) {
+        return { content: [{ type: 'text', text: 'No allowed chats yet. Use /whatsapp:access pair <code> to approve a DM or /whatsapp:access group-add <jid> to enable a group.' }] }
+      }
+
+      const chats = listChats(allowedIds, limit, offset)
+
+      if (chats.length === 0) {
+        return { content: [{ type: 'text', text: `No indexed messages in the ${allowedIds.length} allowed chat(s) yet. Chats appear here once they have received at least one message.` }] }
+      }
+
+      const lines: string[] = [`Showing ${chats.length} chat${chats.length === 1 ? '' : 's'}:`, '']
+      chats.forEach((c, i) => {
+        const when = new Date(c.last_ts * 1000).toISOString().replace('T', ' ').slice(0, 16)
+        const preview = c.last_text.length > 60 ? c.last_text.slice(0, 60) + '…' : c.last_text
+        const who =
+          c.last_direction === 'out'
+            ? 'out, Claude'
+            : `in${c.last_push_name ? ', ' + c.last_push_name : ''}`
+        const kind = c.kind === 'group' ? 'Group' : 'DM'
+        lines.push(`${i + 1}. ${kind} \`${c.chat_id}\``)
+        lines.push(`   ${c.msg_count} msgs · last (${who}): "${preview || '(no text)'}" · ${when}`)
+        lines.push('')
+      })
+
+      return { content: [{ type: 'text', text: lines.join('\n').trimEnd() }] }
+    }
+
+    case 'get_business_profile': {
+      if (!sock) throw new Error('WhatsApp is not connected')
+      const chat_id = (args as any).chat_id as string
+      if (!chat_id || typeof chat_id !== 'string') throw new Error('chat_id is required')
+      if (!chat_id.endsWith('@s.whatsapp.net') && !chat_id.endsWith('@lid')) {
+        throw new Error(`Not a user JID: ${chat_id}. get_business_profile only works on user JIDs (ending in @s.whatsapp.net or @lid), not groups. If you only have a phone number, run check_number_exists first.`)
+      }
+
+      let profile: any
+      try {
+        profile = await (sock as any).getBusinessProfile(chat_id)
+      } catch (err) {
+        throw new Error(`getBusinessProfile lookup failed: ${err}`)
+      }
+
+      if (!profile || typeof profile !== 'object' || Object.keys(profile).length === 0) {
+        return { content: [{ type: 'text', text: `No business profile found for \`${chat_id}\`. This is likely a personal (non-business) WhatsApp account.` }] }
+      }
+
+      const lines: string[] = [`Business profile for \`${chat_id}\`:`, '']
+      if (profile.description) lines.push(`Description: ${profile.description}`)
+      if (profile.category) lines.push(`Category: ${profile.category}`)
+      if (profile.email) lines.push(`Email: ${profile.email}`)
+      if (Array.isArray(profile.website) && profile.website.length > 0) {
+        lines.push(`Website: ${profile.website.join(', ')}`)
+      } else if (typeof profile.website === 'string' && profile.website) {
+        lines.push(`Website: ${profile.website}`)
+      }
+      if (profile.address) lines.push(`Address: ${profile.address}`)
+      if (profile.business_hours) {
+        try {
+          lines.push(`Hours: ${JSON.stringify(profile.business_hours)}`)
+        } catch {
+          lines.push(`Hours: (unparseable)`)
+        }
+      }
+
+      if (lines.length === 2) {
+        lines.push('(Profile exists but all fields are empty.)')
+      }
+
+      return { content: [{ type: 'text', text: lines.join('\n') }] }
+    }
+
+    case 'get_group_metadata': {
+      if (!sock) throw new Error('WhatsApp is not connected')
+      const chat_id = (args as any).chat_id as string
+      if (!chat_id || typeof chat_id !== 'string') throw new Error('chat_id is required')
+      if (!chat_id.endsWith('@g.us')) {
+        throw new Error(`Not a group JID: ${chat_id}. Only group JIDs ending in @g.us are supported by get_group_metadata.`)
+      }
+
+      const access = loadAccess()
+      if (!access.groups[chat_id]) {
+        throw new Error(`Group ${chat_id} is not in the access allowlist. Add it via /whatsapp:access group-add ${chat_id} before requesting metadata.`)
+      }
+
+      let md: any
+      try {
+        md = await (sock as any).groupMetadata(chat_id)
+      } catch (err) {
+        throw new Error(`groupMetadata lookup failed: ${err}. Make sure the bot is still a member of the group.`)
+      }
+
+      const participants: any[] = Array.isArray(md?.participants) ? md.participants : []
+      const isSuper = (p: any) => p?.admin === 'superadmin' || p?.isSuperAdmin === true
+      const isAdmin = (p: any) => p?.admin === 'admin' || p?.isAdmin === true
+      const superCount = participants.filter(isSuper).length
+      const adminCount = participants.filter((p) => isAdmin(p) && !isSuper(p)).length
+
+      const lines: string[] = [`Group metadata for \`${chat_id}\`:`, '']
+      lines.push(`Subject: ${md?.subject || '(none)'}`)
+      if (md?.desc) lines.push(`Description: ${md.desc}`)
+      if (md?.creation) {
+        const when = new Date(md.creation * 1000).toISOString().slice(0, 10)
+        const owner = md.owner ? ` (by \`${md.owner}\`)` : ''
+        lines.push(`Created: ${when}${owner}`)
+      }
+      if (md?.subjectTime && md?.subjectOwner) {
+        const when = new Date(md.subjectTime * 1000).toISOString().slice(0, 10)
+        lines.push(`Subject set: ${when} (by \`${md.subjectOwner}\`)`)
+      }
+      lines.push('Settings:')
+      lines.push(`  • Messages: ${md?.restrict ? 'admins only' : 'everyone can send'}`)
+      lines.push(`  • Subject/description: ${md?.announce ? 'admins only' : 'everyone can change'}`)
+      lines.push(`  • Ephemeral: ${md?.ephemeralDuration ? `${md.ephemeralDuration}s` : 'off'}`)
+      lines.push(`Size: ${participants.length} participant${participants.length === 1 ? '' : 's'} (${adminCount} admin${adminCount === 1 ? '' : 's'}, ${superCount} super admin${superCount === 1 ? '' : 's'})`)
+      lines.push('')
+      lines.push('Participants:')
+      for (const p of participants) {
+        const sup = isSuper(p)
+        const adm = isAdmin(p)
+        const marker = sup ? '👑' : adm ? '⭐' : '•'
+        const role = sup ? ' (super admin)' : adm ? ' (admin)' : ''
+        lines.push(`  ${marker} \`${p?.id || 'unknown'}\`${role}`)
+      }
+
+      return { content: [{ type: 'text', text: lines.join('\n') }] }
+    }
+
+    case 'check_number_exists': {
+      if (!sock) throw new Error('WhatsApp is not connected')
+      const rawPhones = (args as any).phones
+      if (!Array.isArray(rawPhones) || rawPhones.length === 0) {
+        throw new Error('phones must be a non-empty array of phone numbers')
+      }
+      if (rawPhones.length > 50) {
+        throw new Error('phones cannot exceed 50 numbers per call')
+      }
+      const normalized: string[] = []
+      for (const p of rawPhones) {
+        if (typeof p !== 'string' || !p.trim()) continue
+        const digits = p.replace(/\D/g, '')
+        if (digits.length >= 7 && digits.length <= 15) normalized.push(digits)
+      }
+      if (normalized.length === 0) {
+        throw new Error('No valid phone numbers after normalization. Accepts E.164 format (e.g. "+56912345678"); each must be 7–15 digits.')
+      }
+
+      let results: Array<{ jid: string; exists: boolean; lid?: string }> | undefined
+      try {
+        results = (await (sock as any).onWhatsApp(...normalized)) as any
+      } catch (err) {
+        throw new Error(`WhatsApp lookup failed: ${err}`)
+      }
+
+      const lines: string[] = [`Checked ${normalized.length} number${normalized.length === 1 ? '' : 's'}:`, '']
+      for (const input of normalized) {
+        const hit = results?.find((r) => r.jid.startsWith(input + '@'))
+        if (hit && hit.exists) {
+          const lidPart = hit.lid ? ` (LID: \`${hit.lid}\`)` : ''
+          lines.push(`• +${input} → ✅ on WhatsApp — \`${hit.jid}\`${lidPart}`)
+        } else {
+          lines.push(`• +${input} → ❌ not on WhatsApp`)
+        }
+      }
+
+      return { content: [{ type: 'text', text: lines.join('\n') }] }
+    }
+
+    case 'get_message_context': {
+      if (!isDbReady()) {
+        return { content: [{ type: 'text', text: 'Local message store not available — get_message_context disabled.' }] }
+      }
+      const message_id = (args as any).message_id as string
+      if (!message_id) throw new Error('message_id is required')
+      const rawBefore = (args as any).before
+      const rawAfter = (args as any).after
+      const before = typeof rawBefore === 'number' ? rawBefore : 5
+      const after = typeof rawAfter === 'number' ? rawAfter : 5
+
+      const ctx = getMessageContext(message_id, before, after)
+
+      if (!ctx.anchor) {
+        return { content: [{ type: 'text', text: `No message found with id \`${message_id}\` in the local store. It may not be indexed yet — try \`fetch_history\` first.` }] }
+      }
+
+      try {
+        assertAllowedChat(ctx.anchor.chat_id)
+      } catch {
+        return { content: [{ type: 'text', text: `Message \`${message_id}\` belongs to chat \`${ctx.anchor.chat_id}\`, which is not in the access allowlist. Add it via /whatsapp:access before requesting context.` }] }
+      }
+
+      const formatRow = (r: MessageRow, isAnchor: boolean): string => {
+        const when = new Date(r.ts * 1000).toISOString().replace('T', ' ').slice(0, 19)
+        const who = r.direction === 'out' ? 'Claude' : (r.push_name || r.sender_id || 'unknown')
+        const marker = isAnchor ? '→ ' : '  '
+        const text = r.text || '(no text)'
+        return `${marker}[${when}] ${who}: ${text}`
+      }
+
+      const header = `Context around message \`${message_id}\` in chat \`${ctx.anchor.chat_id}\` (${ctx.before.length} before, ${ctx.after.length} after):`
+      const lines: string[] = [
+        header,
+        '',
+        ...ctx.before.map((r) => formatRow(r, false)),
+        formatRow(ctx.anchor, true),
+        ...ctx.after.map((r) => formatRow(r, false)),
+      ]
+
+      return { content: [{ type: 'text', text: lines.join('\n') }] }
+    }
+
+    case 'search_contact': {
+      if (!isDbReady()) {
+        return { content: [{ type: 'text', text: 'Local message store not available — search_contact disabled.' }] }
+      }
+      const query = (args as any).query as string
+      if (!query || typeof query !== 'string' || !query.trim()) {
+        throw new Error('query is required and must be a non-empty string')
+      }
+      const rawLimit = (args as any).limit
+      const limit = typeof rawLimit === 'number' && rawLimit > 0 ? rawLimit : 20
+
+      const access = loadAccess()
+      const allowedIds: string[] = [...access.allowFrom, ...Object.keys(access.groups)]
+      if (allowedIds.length === 0) {
+        return { content: [{ type: 'text', text: 'No allowed chats in access.json. Contacts are only searched within allowlisted chats — configure /whatsapp:access first.' }] }
+      }
+
+      const results = searchContacts(query.trim(), limit, allowedIds)
+
+      if (results.length === 0) {
+        return { content: [{ type: 'text', text: `No contacts found matching "${query.trim()}". Only indexed senders from allowlisted chats are searchable — run fetch_history for a chat to populate older senders if needed.` }] }
+      }
+
+      const lines: string[] = [`Found ${results.length} contact${results.length === 1 ? '' : 's'} matching "${query.trim()}":`, '']
+      results.forEach((r, i) => {
+        const when = new Date(r.last_seen_ts * 1000).toISOString().replace('T', ' ').slice(0, 16)
+        const name = r.push_name || '(no push name)'
+        lines.push(`${i + 1}. ${name} — \`${r.sender_id}\``)
+        lines.push(`   ${r.message_count} msg${r.message_count === 1 ? '' : 's'} across ${r.chat_count} chat${r.chat_count === 1 ? '' : 's'} · last seen ${when}`)
+        lines.push('')
+      })
+
+      return { content: [{ type: 'text', text: lines.join('\n').trimEnd() }] }
     }
 
     default:

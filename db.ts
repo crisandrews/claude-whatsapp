@@ -294,6 +294,172 @@ export function countMessages(chat_id?: string): number {
   }
 }
 
+export interface ChatSummary {
+  chat_id: string
+  kind: 'dm' | 'group'
+  last_ts: number
+  last_text: string
+  last_direction: 'in' | 'out'
+  last_push_name: string | null
+  msg_count: number
+}
+
+export interface MessageContext {
+  anchor: MessageRow | null
+  before: MessageRow[]
+  after: MessageRow[]
+}
+
+function clampWindow(n: number | undefined, def: number, max: number): number {
+  if (n === undefined || n === null) return def
+  if (n < 0) return 0
+  return Math.min(n, max)
+}
+
+export function getMessageContext(
+  message_id: string,
+  before?: number,
+  after?: number,
+): MessageContext {
+  if (!dbInstance) return { anchor: null, before: [], after: [] }
+  const beforeN = clampWindow(before, 5, 50)
+  const afterN = clampWindow(after, 5, 50)
+  try {
+    const anchorRow = dbInstance
+      .prepare(`SELECT * FROM messages WHERE id = ? LIMIT 1`)
+      .get(message_id) as any
+    if (!anchorRow) return { anchor: null, before: [], after: [] }
+    const anchor = rowToMessage(anchorRow)
+
+    const beforeRows: any[] = beforeN > 0
+      ? dbInstance
+          .prepare(
+            `SELECT * FROM messages WHERE chat_id = ? AND ts < ? ORDER BY ts DESC, rowid DESC LIMIT ?`,
+          )
+          .all(anchor.chat_id, anchor.ts, beforeN)
+      : []
+    const afterRows: any[] = afterN > 0
+      ? dbInstance
+          .prepare(
+            `SELECT * FROM messages WHERE chat_id = ? AND ts > ? ORDER BY ts ASC, rowid ASC LIMIT ?`,
+          )
+          .all(anchor.chat_id, anchor.ts, afterN)
+      : []
+
+    return {
+      anchor,
+      before: beforeRows.map(rowToMessage).reverse(),
+      after: afterRows.map(rowToMessage),
+    }
+  } catch {
+    return { anchor: null, before: [], after: [] }
+  }
+}
+
+export function listChats(
+  allowedChatIds: string[],
+  limit?: number,
+  offset?: number,
+): ChatSummary[] {
+  if (!dbInstance) return []
+  if (allowedChatIds.length === 0) return []
+  const lim = clampLimit(limit)
+  const off = Math.max(0, offset ?? 0)
+  const placeholders = allowedChatIds.map(() => '?').join(',')
+  const sql = `
+    SELECT
+      chat_id,
+      MAX(ts) AS last_ts,
+      COUNT(*) AS msg_count,
+      (SELECT text FROM messages m2 WHERE m2.chat_id = m.chat_id ORDER BY ts DESC LIMIT 1) AS last_text,
+      (SELECT direction FROM messages m3 WHERE m3.chat_id = m.chat_id ORDER BY ts DESC LIMIT 1) AS last_direction,
+      (SELECT push_name FROM messages m4 WHERE m4.chat_id = m.chat_id AND direction = 'in' AND push_name IS NOT NULL ORDER BY ts DESC LIMIT 1) AS last_push_name
+    FROM messages m
+    WHERE chat_id IN (${placeholders})
+    GROUP BY chat_id
+    ORDER BY last_ts DESC
+    LIMIT ? OFFSET ?
+  `
+  try {
+    const rows = dbInstance.prepare(sql).all(...allowedChatIds, lim, off) as any[]
+    return rows.map((r) => ({
+      chat_id: r.chat_id,
+      kind: r.chat_id.endsWith('@g.us') ? ('group' as const) : ('dm' as const),
+      last_ts: r.last_ts,
+      last_text: r.last_text ?? '',
+      last_direction: r.last_direction,
+      last_push_name: r.last_push_name ?? null,
+      msg_count: r.msg_count,
+    }))
+  } catch {
+    return []
+  }
+}
+
+export interface ContactSearchResult {
+  sender_id: string
+  push_name: string | null
+  chat_count: number
+  message_count: number
+  last_seen_ts: number
+}
+
+export function searchContacts(
+  query: string,
+  limit?: number,
+  allowedChatIds?: string[],
+): ContactSearchResult[] {
+  if (!dbInstance) return []
+  if (!query || !query.trim()) return []
+  const lim = Math.min(Math.max(limit ?? 20, 1), 100)
+  const pattern = `%${query.trim()}%`
+
+  const useAccessFilter = Array.isArray(allowedChatIds) && allowedChatIds.length > 0
+  const accessClause = useAccessFilter
+    ? `AND m.chat_id IN (${allowedChatIds!.map(() => '?').join(',')})`
+    : ''
+
+  const sql = `
+    SELECT
+      m.sender_id,
+      (SELECT push_name FROM messages WHERE sender_id = m.sender_id AND push_name IS NOT NULL ORDER BY ts DESC LIMIT 1) AS push_name,
+      COUNT(DISTINCT m.chat_id) AS chat_count,
+      COUNT(*) AS message_count,
+      MAX(m.ts) AS last_seen_ts
+    FROM messages m
+    WHERE m.direction = 'in'
+      AND m.sender_id IS NOT NULL
+      ${accessClause}
+      AND (
+        (m.push_name IS NOT NULL AND LOWER(m.push_name) LIKE LOWER(?))
+        OR LOWER(m.sender_id) LIKE LOWER(?)
+      )
+    GROUP BY m.sender_id
+    ORDER BY last_seen_ts DESC
+    LIMIT ?
+  `
+
+  const params: any[] = [
+    ...(useAccessFilter ? allowedChatIds! : []),
+    pattern,
+    pattern,
+    lim,
+  ]
+
+  try {
+    const rows = dbInstance.prepare(sql).all(...params) as any[]
+    return rows.map((r) => ({
+      sender_id: r.sender_id,
+      push_name: r.push_name ?? null,
+      chat_count: r.chat_count,
+      message_count: r.message_count,
+      last_seen_ts: r.last_seen_ts,
+    }))
+  } catch {
+    return []
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Export — pure formatters over MessageRow[]
 // ---------------------------------------------------------------------------

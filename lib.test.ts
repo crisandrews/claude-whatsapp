@@ -85,6 +85,15 @@ test('matchesBot — null jid returns false', () => {
   assert.equal(matchesBot(null, '15551234567', 's.whatsapp.net'), false)
 })
 
+test('matchesBot — LID and PN locals do not coincidentally collide', () => {
+  // Baileys can deliver the owner's own JID under either namespace; the
+  // server captures both `sock.user.id` (PN) and `sock.user.lid` and checks
+  // them independently. Confirm distinct values don't cross-match on the
+  // pure helper, which is what the server's closure layers on top of.
+  assert.equal(matchesBot('12345678901234@lid', '15551234567', 's.whatsapp.net'), false)
+  assert.equal(matchesBot('12345678901234@lid', '12345678901234', 'lid'), true)
+})
+
 // ---------------------------------------------------------------------------
 // parsePermissionReply
 // Spec: /^\s*(y|yes|n|no)\s+([a-km-z]{5})\s*$/i — 5 letters, no `l`,
