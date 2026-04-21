@@ -355,17 +355,17 @@ Showing 3 chats:
    12 msgs · last (in, Juan Pérez): "yes please" · 2026-04-20 22:14
 
 2. Group `120363xxx@g.us`
-   47 msgs · last (in, Pedro): "donde jugamos hoy?" · 2026-04-19 21:00
+   47 msgs · last (in, Pedro): "where are we playing today?" · 2026-04-19 21:00
 
 3. DM `5491166667777@s.whatsapp.net`
-   5 msgs · last (out, Claude): "Listo, agendado" · 2026-04-18 18:45
+   5 msgs · last (out, Claude): "Done, scheduled." · 2026-04-18 18:45
 ```
 
 **Worked example**
 
-> *"¿Qué chats activos tengo en WhatsApp?"*
+> *"What active chats do I have on WhatsApp?"*
 
-Claude calls `list_chats` with no arguments. The tool returns the formatted list filtered to the allowlist. Claude then summarizes, or — if the user follows up with *"exportá la conversación con Juan"* — extracts the DM's `chat_id` from the list and passes it to `export_chat`.
+Claude calls `list_chats` with no arguments. The tool returns the formatted list filtered to the allowlist. Claude then summarizes, or — if the user follows up with *"export my conversation with Juan"* — extracts the DM's `chat_id` from the list and passes it to `export_chat`.
 
 **Pitfalls**
 
@@ -402,9 +402,9 @@ When a number is active, the canonical JID is what you pass to `reply`, `react`,
 
 **Worked example**
 
-> *"¿Juan está en WhatsApp? Es +5491155556666."*
+> *"Is Juan on WhatsApp? His number is +5491155556666."*
 
-Claude calls `check_number_exists` with `phones: ["+5491155556666"]`. On `exists: true`, Claude can say *"Sí, está activo"* with confidence, and has the JID ready if the user follows up with *"mandale un saludo"*.
+Claude calls `check_number_exists` with `phones: ["+5491155556666"]`. On `exists: true`, Claude can say *"Yes, he's active"* with confidence, and has the JID ready if the user follows up with *"send him a hello"*.
 
 **Pitfalls**
 
@@ -433,7 +433,7 @@ A plain-text block with group header, settings, participant count, and the full 
 Group metadata for `120363xxx@g.us`:
 
 Subject: Fútbol Lunes
-Description: Juntada semanal de fútbol 5
+Description: Weekly 5-a-side football meetup
 Created: 2024-03-15 (by `5491155556666@s.whatsapp.net`)
 Settings:
   • Messages: everyone can send
@@ -451,7 +451,7 @@ Participants:
 
 **Worked example**
 
-> *"¿quiénes son admins del grupo Fútbol Lunes?"*
+> *"Who are the admins of the Fútbol Lunes group?"*
 
 Claude already has the group's JID from earlier conversation or via `list_chats`. Calls `get_group_metadata` with the JID, filters the participant list to admins in the output, answers with their JIDs (or cross-references `list_group_senders` if it needs display names).
 
@@ -504,7 +504,7 @@ No business profile found for `56912345678@s.whatsapp.net`. This is likely a per
 
 **Worked example**
 
-> *"¿El +56987654321 es un negocio? ¿Qué hacen?"*
+> *"Is +56987654321 a business? What do they do?"*
 
 Claude first calls `check_number_exists` with the phone to resolve the JID, then `get_business_profile` with that JID. If a profile exists, Claude summarizes description + category to the user.
 
@@ -538,19 +538,19 @@ Example output:
 ```
 Context around message `3EB0F8AF…` in chat `120363xxx@g.us` (3 before, 2 after):
 
-  [2026-04-20 21:00:12] Pedro: donde jugamos hoy?
-  [2026-04-20 21:00:34] Carlos: en el club como siempre
-  [2026-04-20 21:01:05] Pedro: ah dale
-→ [2026-04-20 21:01:33] Juan: a qué hora?
+  [2026-04-20 21:00:12] Pedro: where are we playing today?
+  [2026-04-20 21:00:34] Carlos: at the club as usual.
+  [2026-04-20 21:01:05] Pedro: ok, cool.
+→ [2026-04-20 21:01:33] Juan: what time?
   [2026-04-20 21:02:01] Carlos: 7pm
-  [2026-04-20 21:02:15] Pedro: voy
+  [2026-04-20 21:02:15] Pedro: I'm in.
 ```
 
 **Worked example**
 
-> *"Buscá 'partido' y dame contexto del primer resultado."*
+> *"Search for 'game' and give me context for the first result."*
 
-Claude calls `search_messages` with `query: "partido"`, receives hits with `id` fields, then calls `get_message_context` with the first hit's `id`. With the surrounding thread in hand, Claude can answer follow-ups like *"¿qué respondieron?"* or *"respondele a ese mensaje con un resumen"*.
+Claude calls `search_messages` with `query: "game"`, receives hits with `id` fields, then calls `get_message_context` with the first hit's `id`. With the surrounding thread in hand, Claude can answer follow-ups like *"what did they reply?"* or *"reply to that message with a summary"*.
 
 **Pitfalls**
 
@@ -591,9 +591,9 @@ Found 3 contacts matching "juan":
 
 **Worked example**
 
-> *"¿Tengo algún Juan en WhatsApp?"*
+> *"Do I have any contact named Juan on WhatsApp?"*
 
-Claude calls `search_contact` with `query: "juan"`. The tool returns matches with JIDs. If the user follows up with *"mandale un saludo al primero"*, Claude extracts the first result's JID and passes it to `reply`.
+Claude calls `search_contact` with `query: "juan"`. The tool returns matches with JIDs. If the user follows up with *"send a hello to the first one"*, Claude extracts the first result's JID and passes it to `reply`.
 
 **Pitfalls**
 
@@ -601,6 +601,616 @@ Claude calls `search_contact` with `query: "juan"`. The tool returns matches wit
 - **Push name shown is the most recent.** WhatsApp users can change their display name — this tool surfaces whatever they were called in their last message.
 - **Access-filtered.** Senders from chats currently outside the allowlist don't appear, even if they exist in `messages.db` from a past allowlist state. If you expect someone to appear but they don't, check `/whatsapp:access` for the relevant chat.
 - **Outbound messages excluded.** Claude's own messages have `direction='out'` and no sender_id is matched. You'll never see the bot as a result.
+
+---
+
+## `block_contact`
+
+Block a WhatsApp contact so they can no longer send messages via Baileys' `updateBlockStatus`. Only works on user JIDs — groups can't be blocked this way. No access gate: this is a defensive action that applies even to contacts outside the allowlist (spammers especially). Every call is logged to `logs/system.log`.
+
+**Arguments**
+
+| Field | Required | Notes |
+|---|---|---|
+| `chat_id` | ✅ | User JID ending in `@s.whatsapp.net` or `@lid`. Not a group. If only a phone is known, run `check_number_exists` first. |
+
+**Return**
+
+A one-line confirmation: `Blocked \`<jid>\`. They can no longer send you messages on WhatsApp.`
+
+**Worked example**
+
+> *"Block the number that keeps spamming me — +5491199999999."*
+
+Claude first calls `check_number_exists` to resolve the canonical JID, then `block_contact` with that JID. Messages from that contact stop reaching the plugin from that point onwards.
+
+**Pitfalls**
+
+- **Immediate, server-side.** No confirmation prompt — if the agent decides to block, it happens. WhatsApp stops delivering messages from that sender.
+- **Logged** to `logs/system.log` as `block_contact: blocked <jid>`. Check the log if you suspect an over-eager block.
+- **Groups can't be blocked** this way — use `leave_group` (coming later) or `/whatsapp:access remove-group` instead.
+- **Reversible** via `unblock_contact`.
+
+---
+
+## `unblock_contact`
+
+Unblock a previously-blocked WhatsApp contact via Baileys' `updateBlockStatus`. Only works on user JIDs.
+
+**Arguments**
+
+| Field | Required | Notes |
+|---|---|---|
+| `chat_id` | ✅ | User JID ending in `@s.whatsapp.net` or `@lid`. |
+
+**Return**
+
+A one-line confirmation with a caveat about the access allowlist: `Unblocked \`<jid>\`. They can now send you messages on WhatsApp again. Note: this does NOT re-add them to the plugin's access allowlist — use /whatsapp:access pair or allow for that.`
+
+**Worked example**
+
+> *"I blocked Juan by accident last week — unblock him."*
+
+Claude calls `unblock_contact` with Juan's JID (the user must know the JID, or look it up via `search_contact`).
+
+**Pitfalls**
+
+- **Unblocking restores WhatsApp delivery, not the plugin's access gate.** If the contact was never on the allowlist, their messages will still be dropped by the plugin even after unblocking. Pair with `/whatsapp:access pair <code>` or `allow <jid>` to fully restore them.
+- **Logged** to `logs/system.log` as `unblock_contact: unblocked <jid>`.
+
+---
+
+## `mark_read`
+
+Mark one or more messages in a chat as read. Sends "blue checks" to the senders via Baileys' `readMessages`. Useful after the agent has actioned a batch of inbound messages and wants to clear the unread state.
+
+**Arguments**
+
+| Field | Required | Notes |
+|---|---|---|
+| `chat_id` | ✅ | JID of the chat the messages belong to. Must be in the access allowlist. |
+| `message_ids` | ✅ | Array of message IDs to mark as read. Source them from inbound notifications (`meta.message_id`), `search_messages` results, or `get_message_context`. Max 100 per call. |
+
+**Return**
+
+A one-line confirmation: `Marked N messages as read in \`<chat_id>\` (sent blue checks).`
+
+**Worked example**
+
+> *"I've answered the unread DMs from Juan — mark them as read."*
+
+Claude collects the message IDs of Juan's recent inbound messages (from prior notifications or via `get_message_context`) and calls `mark_read` with the chat_id and the list of IDs. Juan now sees the blue checks on his side.
+
+**Pitfalls**
+
+- **Sends blue checks** — this is a privacy disclosure. The sender sees the user has read their message. If the user normally keeps read receipts disabled in WhatsApp, this tool re-discloses on a per-message basis.
+- **Inbound only.** The tool hardcodes `fromMe: false` in the key — only inbound messages get marked. Outbound wouldn't make sense to mark.
+- **Access-gated.** The chat must be in the access allowlist; non-allowlisted chats reject the call.
+- **No partial-success reporting.** If `readMessages` accepts the batch but WhatsApp silently drops a key (e.g. for an expired message), the tool still reports success — WhatsApp doesn't surface per-key acknowledgements.
+
+---
+
+## `archive_chat`
+
+Archive or unarchive a WhatsApp chat via Baileys' `chatModify`. Moves a chat out of the main list (or back in). Useful for inbox hygiene — clearing a long-resolved DM or moving a busy group out of the at-a-glance view without leaving it.
+
+**Arguments**
+
+| Field | Required | Notes |
+|---|---|---|
+| `chat_id` | ✅ | JID of the chat to archive or unarchive. Must be in the access allowlist. |
+| `archive` | ✅ | `true` to archive, `false` to unarchive. |
+
+**Return**
+
+A one-line confirmation: `Archived \`<chat_id>\`.` or `Unarchived \`<chat_id>\`.`
+
+**Worked example**
+
+> *"Archive the conversation with Juan — we're done with that thread."*
+
+Claude resolves Juan's `chat_id` (from `list_chats` or earlier context), then calls `archive_chat` with `archive: true`. The chat moves to the Archived section in WhatsApp on all linked devices.
+
+**Pitfalls**
+
+- **Requires at least one indexed message.** Baileys' `chatModify` needs a `lastMessages` array to build the payload. The tool reads the most recent message from `messages.db` for the chat. If the chat has no indexed messages (e.g. a contact who paired but never sent anything), the tool errors with a clear "send or receive at least one message first" hint.
+- **Access-gated.** Non-allowlisted chats are rejected.
+- **Reversible.** `archive: false` brings the chat back into the main list.
+- **Logged** to `logs/system.log` as `archive_chat: archived <jid>` (or `unarchived`).
+- **Syncs to all linked devices.** WhatsApp propagates the archive state — the user's phone reflects the change too.
+
+---
+
+## `update_group_subject`
+
+Rename a WhatsApp group via Baileys' `groupUpdateSubject`. Requires the bot to be an admin of the group.
+
+**Arguments**
+
+| Field | Required | Notes |
+|---|---|---|
+| `chat_id` | ✅ | Group JID ending in `@g.us`. Must be in `access.groups`. |
+| `subject` | ✅ | New group name. Non-empty. |
+
+**Return**
+
+A one-line confirmation: `Updated subject of \`<jid>\` to "<subject>".`
+
+**Worked example**
+
+> *"Rename the team group to 'Q2 Launch Team'."*
+
+Claude calls `update_group_subject` with the group's JID and the new name. WhatsApp updates the subject on all participants' devices.
+
+**Pitfalls**
+
+- **Bot must be admin.** If not, Baileys errors with a permission denial; the tool surfaces that with an actionable message.
+- **Access-gated.** Group must be in `access.groups`.
+- **Logged** to `logs/system.log` as `update_group_subject: <jid> → "<subject>"`.
+
+---
+
+## `update_group_description`
+
+Update or clear a WhatsApp group description via Baileys' `groupUpdateDescription`. Pass an empty string or omit `description` to clear it. Requires the bot to be an admin.
+
+**Arguments**
+
+| Field | Required | Notes |
+|---|---|---|
+| `chat_id` | ✅ | Group JID ending in `@g.us`. Must be in `access.groups`. |
+| `description` | | New description. Empty string or omitted = clear. |
+
+**Return**
+
+A one-line confirmation: `Updated description of \`<jid>\`.` or `Cleared description of \`<jid>\`.`
+
+**Worked example**
+
+> *"Update the team group description to 'Async standup at 10am Mon/Wed/Fri'."*
+
+Claude calls `update_group_description` with the group's JID and the new text. To clear: pass `description: ""` or omit.
+
+**Pitfalls**
+
+- **Bot must be admin.** Same Baileys behavior as `update_group_subject`.
+- **Access-gated.**
+- **Logged** to `logs/system.log` as `update_group_description: <jid> updated` (or `cleared`).
+
+---
+
+## `update_group_settings`
+
+Toggle group-level settings via Baileys' `groupSettingUpdate`. Two independent toggles surfaced as separate booleans for clarity.
+
+**Arguments**
+
+| Field | Required | Notes |
+|---|---|---|
+| `chat_id` | ✅ | Group JID ending in `@g.us`. Must be in `access.groups`. |
+| `admins_only_messages` | | `true` = only admins can send messages (WhatsApp's "announcement" mode). `false` = everyone. Omit to leave unchanged. |
+| `admins_only_info` | | `true` = only admins can edit subject/description/picture (WhatsApp's "locked" mode). `false` = everyone. Omit to leave unchanged. |
+
+At least one of the two booleans must be provided; the tool errors otherwise.
+
+**Return**
+
+A one-line confirmation listing what was applied: `Updated settings of \`<jid>\`: messages: admins only; info edit: everyone.`
+
+**Worked example**
+
+> *"Lock the announcements group so only admins can send messages."*
+
+Claude calls `update_group_settings` with `admins_only_messages: true` (and omits `admins_only_info` to leave it as-is).
+
+**Pitfalls**
+
+- **Bot must be admin.** Each toggle is a separate Baileys call (`groupSettingUpdate` accepts one setting at a time); if both booleans are passed, two calls happen sequentially. If the second fails the first stays applied — partial-state risk in pathological cases.
+- **Access-gated.**
+- **Logged** to `logs/system.log` as `update_group_settings: <jid> — messages: ..., info edit: ...`.
+
+---
+
+## `add_participants`
+
+Add one or more participants to a WhatsApp group via Baileys' `groupParticipantsUpdate` with action `add`. Returns per-participant status so the agent can surface which JIDs succeeded and which failed (and why).
+
+**Arguments**
+
+| Field | Required | Notes |
+|---|---|---|
+| `chat_id` | ✅ | Group JID ending in `@g.us`. Must be in `access.groups`. |
+| `participants` | ✅ | Array of user JIDs to add. Max 50 per call. If only phones are known, chain `check_number_exists` first. |
+
+**Return**
+
+A per-participant report with markers and the raw WhatsApp status code:
+
+```
+Add result for `120363xxx@g.us`:
+
+✅ `5491155556666@s.whatsapp.net` — added (200)
+❌ `5491155557777@s.whatsapp.net` — not found / invalid number (404)
+⚠️ `5491155558888@s.whatsapp.net` — already in group (409)
+```
+
+Status codes follow WhatsApp's HTTP-like convention: `200` = success, `401`/`403` = bot not admin, `404` = invalid JID, `408` = timeout, `409` = already in group, `500` = server error.
+
+**Worked example**
+
+> *"Add Juan and María to the launch group."*
+
+Claude resolves their JIDs (via `check_number_exists` if needed), then calls `add_participants` with the group `chat_id` and the JID array. The output tells Claude (and the user) exactly who got in.
+
+**Pitfalls**
+
+- **Bot must be admin.** Without admin status, every JID returns `403`. Surface the error.
+- **Access-gated.** Group must be in `access.groups`.
+- **Some contacts can't be added programmatically.** WhatsApp blocks adds when the target's privacy settings disallow it from non-contacts; those return `403` per-participant even if the bot is admin.
+- **Logged** to `logs/system.log` with success / failure counts.
+
+---
+
+## `remove_participants`
+
+Remove one or more participants from a WhatsApp group via Baileys' `groupParticipantsUpdate` with action `remove`. Same shape as `add_participants` but reversing the operation.
+
+**Arguments**
+
+| Field | Required | Notes |
+|---|---|---|
+| `chat_id` | ✅ | Group JID ending in `@g.us`. Must be in `access.groups`. |
+| `participants` | ✅ | Array of user JIDs to remove. Max 50 per call. |
+
+**Return**
+
+A per-participant report:
+
+```
+Remove result for `120363xxx@g.us`:
+
+✅ `5491155556666@s.whatsapp.net` — removed (200)
+⚠️ `5491155557777@s.whatsapp.net` — not in group (409)
+```
+
+Status codes mirror `add_participants`. Note the meaning of `409` flips: here it means "not in the group".
+
+**Worked example**
+
+> *"Kick Juan from the launch group — he left the team."*
+
+Claude calls `remove_participants` with the group `chat_id` and Juan's JID.
+
+**Pitfalls**
+
+- **Bot must be admin.**
+- **Access-gated.**
+- **Removing the bot itself is not what this tool is for** — use `leave_group` (coming later) instead. WhatsApp may allow the call, but the result is undefined behavior.
+- **Logged** to `logs/system.log` with success / failure counts.
+
+---
+
+## `promote_admins`
+
+Promote one or more group members to admin via Baileys' `groupParticipantsUpdate` with action `promote`. Same input / output shape as `add_participants` / `remove_participants`.
+
+**Arguments**
+
+| Field | Required | Notes |
+|---|---|---|
+| `chat_id` | ✅ | Group JID ending in `@g.us`. Must be in `access.groups`. |
+| `participants` | ✅ | Array of user JIDs to promote. Max 50 per call. Must already be members of the group. |
+
+**Return**
+
+A per-participant report:
+
+```
+Promote result for `120363xxx@g.us`:
+
+✅ `5491155556666@s.whatsapp.net` — promoted (200)
+❌ `5491155557777@s.whatsapp.net` — not found / invalid number (404)
+```
+
+Status code semantics: `200` success, `403` bot not admin (or not super admin in some communities), `404` not in group, `409` already an admin.
+
+**Worked example**
+
+> *"Make Juan an admin of the launch group."*
+
+Claude calls `promote_admins` with the group's `chat_id` and Juan's JID.
+
+**Pitfalls**
+
+- **Bot must be admin** (super admin in some communities). Otherwise every call returns `403`.
+- **Participants must already be members.** Promote acts on existing members; non-members return `404`. Use `add_participants` first.
+- **Access-gated.**
+- **Logged** to `logs/system.log` with success / failure counts.
+
+---
+
+## `demote_admins`
+
+Demote one or more admins back to regular members via Baileys' `groupParticipantsUpdate` with action `demote`. Mirror of `promote_admins`.
+
+**Arguments**
+
+| Field | Required | Notes |
+|---|---|---|
+| `chat_id` | ✅ | Group JID ending in `@g.us`. Must be in `access.groups`. |
+| `participants` | ✅ | Array of admin JIDs to demote. Max 50 per call. Must currently be admins. |
+
+**Return**
+
+A per-participant report:
+
+```
+Demote result for `120363xxx@g.us`:
+
+✅ `5491155556666@s.whatsapp.net` — demoted (200)
+⚠️ `5491155557777@s.whatsapp.net` — not in group (409)
+```
+
+**Worked example**
+
+> *"Demote Juan from admin in the team group."*
+
+Claude calls `demote_admins` with the group's `chat_id` and Juan's JID.
+
+**Pitfalls**
+
+- **Bot must be admin.**
+- **Cannot demote the super admin** (the group creator). WhatsApp rejects with `403` per-participant.
+- **Watch out for self-demotion.** If the bot is the only admin and demotes itself, no admins remain — subsequent group admin calls will fail.
+- **Access-gated.**
+- **Logged** to `logs/system.log`.
+
+---
+
+## `leave_group`
+
+Bot leaves a WhatsApp group via Baileys' `groupLeave`. Destructive — re-entering requires an invite from a current member.
+
+**Arguments**
+
+| Field | Required | Notes |
+|---|---|---|
+| `chat_id` | ✅ | Group JID ending in `@g.us`. Must be in `access.groups`. |
+
+**Return**
+
+A confirmation that includes the next-step recovery hint:
+
+```
+Left `120363xxx@g.us` and removed it from the access allowlist. To rejoin, the bot needs an invite from a current member, then run /whatsapp:access group-add 120363xxx@g.us.
+```
+
+**Worked example**
+
+> *"Leave the spam group I got added to."*
+
+Claude calls `leave_group` with the group's `chat_id`. The bot exits, the group entry is auto-removed from `access.json`, and any further attempts to message the group will be rejected by `assertAllowedGroup`.
+
+**Pitfalls**
+
+- **Destructive.** No undo — the bot is out. Re-entry requires another member to invite the bot, then re-adding to `access.groups`.
+- **Auto-cleanup of `access.groups`.** The group entry is removed automatically so the agent can't accidentally try to use the group afterwards. The cleanup is best-effort; if the access file is corrupt the leave still succeeds and a warning is logged.
+- **Access-gated.** Group must be in `access.groups` to call (you can't leave a group you never allowed).
+- **Logged** to `logs/system.log`.
+
+---
+
+## `toggle_group_ephemeral`
+
+Set or clear the disappearing-messages timer for a WhatsApp group via Baileys' `groupToggleEphemeral`. Accepts any non-negative number of seconds.
+
+**Arguments**
+
+| Field | Required | Notes |
+|---|---|---|
+| `chat_id` | ✅ | Group JID ending in `@g.us`. Must be in `access.groups`. |
+| `duration_seconds` | ✅ | `0` = disable disappearing messages. WhatsApp's standard presets: `86400` (24h), `604800` (7d), `2592000` (30d), `7776000` (90d). |
+
+**Return**
+
+A one-line confirmation: `Ephemeral messages for \`<jid>\` set to <N>s.` or `... set to disabled.`
+
+**Worked example**
+
+> *"Set the strategy group to wipe messages after 7 days."*
+
+Claude calls `toggle_group_ephemeral` with `duration_seconds: 604800`.
+
+**Pitfalls**
+
+- **Bot typically must be admin.** Non-admins can't change ephemeral settings unless the group itself permits it.
+- **WhatsApp clients render only the standard presets nicely.** Custom values (e.g. 3600 = 1 hour) are accepted by the protocol and applied, but most clients show "custom" instead of a friendly label.
+- **Access-gated.**
+- **Logged** to `logs/system.log` as `toggle_group_ephemeral: <jid> → <status>`.
+
+---
+
+## `handle_join_request`
+
+Manage pending join requests for a WhatsApp group with restricted-add settings. Single tool with three actions:
+
+- `list` — enumerate currently pending requests (no mutation).
+- `approve` — admit specific JIDs into the group.
+- `reject` — deny specific JIDs.
+
+**Arguments**
+
+| Field | Required | Notes |
+|---|---|---|
+| `chat_id` | ✅ | Group JID ending in `@g.us`. Must be in `access.groups`. |
+| `action` | ✅ | One of `list`, `approve`, `reject`. |
+| `participants` | conditional | Required when `action` is `approve` or `reject`. Array of user JIDs to act on. Max 50. Discover them via action `list` first. |
+
+**Return**
+
+For `list`:
+
+```
+Pending join requests for `120363xxx@g.us`:
+
+• `5491155556666@s.whatsapp.net` — via invite_link
+• `5491155557777@s.whatsapp.net` — via non_admin_add
+```
+
+For `approve` / `reject`:
+
+```
+Approve result for `120363xxx@g.us`:
+
+✅ `5491155556666@s.whatsapp.net` — approved (200)
+❌ `5491155557777@s.whatsapp.net` — failed (404)
+```
+
+**Worked example**
+
+> *"Approve all the pending requests on the community group."*
+
+Claude calls `handle_join_request` with `action: 'list'` first, gets the pending JIDs, then calls again with `action: 'approve'` and the `participants` array.
+
+**Pitfalls**
+
+- **Bot must be admin.** Otherwise `list` errors and approve/reject return `403` per JID.
+- **Access-gated.**
+- **Approve/reject are logged** to `logs/system.log`. `list` is read-only and not logged.
+
+---
+
+## `create_group`
+
+Create a new WhatsApp group via Baileys' `groupCreate`. The bot becomes super admin. The new group is **automatically registered** to `access.groups` in open mode (no mention required, no member restrictions) so the bot can interact with it immediately — without this auto-step the agent would have to run `/whatsapp:access group-add` manually right after creating the group.
+
+**Arguments**
+
+| Field | Required | Notes |
+|---|---|---|
+| `subject` | ✅ | Group name. Non-empty. |
+| `participants` | | Initial members as user JIDs. Empty array allowed — creates a bot-only group; add members later via `add_participants`. Max 50. |
+
+**Return**
+
+A confirmation with the new group JID and participant count:
+
+```
+Created group "Q2 Launch Team" → `120363xxx@g.us` with 3 initial participants. Auto-registered to access.groups in open mode.
+```
+
+**Worked example**
+
+> *"Create a group called 'Q2 Launch Team' with Juan and María."*
+
+Claude resolves the JIDs (via `check_number_exists` if needed), then calls `create_group` with the subject and the JID array. The new JID can be used immediately for further ops.
+
+**Pitfalls**
+
+- **WhatsApp throttles bulk group creation.** Don't create dozens of groups back-to-back — you'll trigger anti-spam.
+- **Some contacts can't be added at creation** for the same privacy reasons as `add_participants` (their settings disallow non-contact adds). They're omitted from the participant list silently; check `get_group_metadata` after to see who actually got in.
+- **Auto-registration uses open mode.** If you want to gate the new group, run `/whatsapp:access group-add <new-jid> --mention` (mention-only) or set per-member allowlist via `group-allow` after creation.
+- **Logged** to `logs/system.log`.
+
+---
+
+## `join_group`
+
+Join a WhatsApp group via an invite code or invite link, using Baileys' `groupAcceptInvite`. The joined group is **automatically registered** to `access.groups` in open mode (same auto-register logic as `create_group`).
+
+**Arguments**
+
+| Field | Required | Notes |
+|---|---|---|
+| `invite` | ✅ | Either the 8-character invite code (e.g. `AbCdEf12`) or the full URL (`https://chat.whatsapp.com/AbCdEf12345678`). The URL form gets parsed automatically. |
+
+**Return**
+
+A confirmation with the joined group JID:
+
+```
+Joined group `120363xxx@g.us` via invite code `AbCdEf12345678`. Auto-registered to access.groups in open mode.
+```
+
+**Worked example**
+
+> *"Join this group: https://chat.whatsapp.com/AbCdEf12345678."*
+
+Claude calls `join_group` with the URL. The plugin extracts the code, accepts the invite, and the bot is now in the group with full access.
+
+**Pitfalls**
+
+- **Expired or revoked codes fail** — Baileys returns no JID; the tool errors with a clear "may be expired, revoked, or invalid" hint.
+- **Already in the group** — Baileys typically returns the existing JID, no error. The auto-register is a no-op.
+- **Spam invites** — joining a malicious group still works mechanically, but the bot may be exposed. Treat invites from unknown sources cautiously.
+- **Logged** to `logs/system.log`.
+
+---
+
+## `get_invite_code`
+
+Get the current invite code for a WhatsApp group via Baileys' `groupInviteCode`. Returns the 8-character code; the full invite URL is `https://chat.whatsapp.com/<code>`.
+
+**Arguments**
+
+| Field | Required | Notes |
+|---|---|---|
+| `chat_id` | ✅ | Group JID ending in `@g.us`. Must be in `access.groups`. |
+
+**Return**
+
+The code and the full invite URL:
+
+```
+Invite code for `120363xxx@g.us`: `AbCdEf12345678`
+Full invite URL: https://chat.whatsapp.com/AbCdEf12345678
+```
+
+**Worked example**
+
+> *"Get me the invite link for the launch group."*
+
+Claude calls `get_invite_code` with the group's `chat_id` and returns the URL to the user.
+
+**Pitfalls**
+
+- **Bot must be admin.** Without admin status, Baileys returns no code; the tool errors.
+- **Access-gated.**
+- **Anyone with this code can join** the group (subject to the group's join-request settings — see `handle_join_request`). Treat the code like a password.
+
+---
+
+## `revoke_invite_code`
+
+Revoke the current invite code for a WhatsApp group and generate a new one, via Baileys' `groupRevokeInvite`. The old invite link stops working immediately. Returns the new code in the same call (no need to chain `get_invite_code` after).
+
+**Arguments**
+
+| Field | Required | Notes |
+|---|---|---|
+| `chat_id` | ✅ | Group JID ending in `@g.us`. Must be in `access.groups`. |
+
+**Return**
+
+The new code and full invite URL:
+
+```
+Revoked old invite for `120363xxx@g.us`. New code: `XyZ12345678AbCd`
+Full invite URL: https://chat.whatsapp.com/XyZ12345678AbCd
+```
+
+**Worked example**
+
+> *"Someone leaked the invite link to the team group — rotate it."*
+
+Claude calls `revoke_invite_code` with the group's `chat_id`. The old link dies; the new one is returned immediately so Claude can share it with the legitimate members.
+
+**Pitfalls**
+
+- **Bot must be admin.**
+- **Access-gated.**
+- **Members already in the group are unaffected** — only future joiners using the old code are blocked.
+- **Logged** to `logs/system.log`.
 
 ---
 

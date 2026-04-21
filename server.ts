@@ -2002,6 +2002,246 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
         required: ['query'],
       },
     },
+    {
+      name: 'block_contact',
+      description: 'Block a WhatsApp contact so they can no longer send messages via Baileys `updateBlockStatus` with action `block`. Only works on user JIDs (`@s.whatsapp.net` or `@lid`), not groups. No access gate — this is a defensive action that applies even to contacts outside the allowlist (spammers especially). Every call is logged to `logs/system.log` for auditability. Reversible via `unblock_contact`. Use when the user asks "block X", "stop X from messaging me", or to handle spam.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          chat_id: { type: 'string', description: 'User JID ending in @s.whatsapp.net or @lid. If only a phone is known, run check_number_exists first to resolve the canonical JID.' },
+        },
+        required: ['chat_id'],
+      },
+    },
+    {
+      name: 'unblock_contact',
+      description: 'Unblock a previously-blocked WhatsApp contact via Baileys `updateBlockStatus` with action `unblock`. Only works on user JIDs (`@s.whatsapp.net` or `@lid`), not groups. No access gate. Every call is logged to `logs/system.log`. Does NOT re-add the contact to the plugin access allowlist — pair with `/whatsapp:access pair` or `allow` to fully restore a dropped contact.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          chat_id: { type: 'string', description: 'User JID ending in @s.whatsapp.net or @lid.' },
+        },
+        required: ['chat_id'],
+      },
+    },
+    {
+      name: 'mark_read',
+      description: 'Mark one or more messages in a chat as read (sends "blue checks" to the senders) via Baileys `readMessages`. Use after the agent has actioned a batch of inbound messages and wants to clear the unread state, or when the user explicitly asks to mark messages as read. Requires the chat to be in the access allowlist. Inbound messages only.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          chat_id: { type: 'string', description: 'JID of the chat the messages belong to. Must be in the access allowlist.' },
+          message_ids: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'List of message IDs to mark as read. Source them from inbound notifications (meta.message_id), search_messages results, or get_message_context. Max 100 per call.',
+          },
+        },
+        required: ['chat_id', 'message_ids'],
+      },
+    },
+    {
+      name: 'archive_chat',
+      description: 'Archive or unarchive a WhatsApp chat via Baileys `chatModify`. Moves the chat out of the main list (or back in). Useful for inbox hygiene. Requires the chat to be in the access allowlist AND have at least one indexed message in the local store, because Baileys needs the last-message key to build the chatModify payload. Logged to `logs/system.log`.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          chat_id: { type: 'string', description: 'JID of the chat to archive or unarchive. Must be in the access allowlist.' },
+          archive: { type: 'boolean', description: 'true to archive the chat, false to unarchive (move it back into the main list).' },
+        },
+        required: ['chat_id', 'archive'],
+      },
+    },
+    {
+      name: 'update_group_subject',
+      description: 'Rename a WhatsApp group via Baileys `groupUpdateSubject`. Requires the bot to be an admin of the group; Baileys errors if not. Group must be in the access allowlist. Logged to `logs/system.log`.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          chat_id: { type: 'string', description: 'Group JID ending in @g.us. Must be in access.groups.' },
+          subject: { type: 'string', description: 'New group name. Required, non-empty.' },
+        },
+        required: ['chat_id', 'subject'],
+      },
+    },
+    {
+      name: 'update_group_description',
+      description: 'Update or clear a WhatsApp group description via Baileys `groupUpdateDescription`. Pass an empty string or omit `description` to clear it. Requires the bot to be an admin of the group. Group must be in the access allowlist. Logged to `logs/system.log`.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          chat_id: { type: 'string', description: 'Group JID ending in @g.us. Must be in access.groups.' },
+          description: { type: 'string', description: 'New description. Empty string or omitted = clear.' },
+        },
+        required: ['chat_id'],
+      },
+    },
+    {
+      name: 'update_group_settings',
+      description: 'Toggle group-level settings via Baileys `groupSettingUpdate`. Two independent toggles: `admins_only_messages` (only admins can send messages vs everyone) and `admins_only_info` (only admins can edit subject/description/picture vs everyone). Pass either or both. Requires the bot to be an admin of the group. Group must be in the access allowlist. Logged to `logs/system.log`.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          chat_id: { type: 'string', description: 'Group JID ending in @g.us. Must be in access.groups.' },
+          admins_only_messages: { type: 'boolean', description: 'true = only admins can send messages (announcement mode). false = anyone can send. Optional; omit to leave unchanged.' },
+          admins_only_info: { type: 'boolean', description: 'true = only admins can edit subject/description/picture (locked mode). false = anyone can edit. Optional; omit to leave unchanged.' },
+        },
+        required: ['chat_id'],
+      },
+    },
+    {
+      name: 'add_participants',
+      description: 'Add one or more participants to a WhatsApp group via Baileys `groupParticipantsUpdate` with action `add`. Returns per-participant status (success / failed / already-in). Bot must be an admin of the group. Group must be in the access allowlist. Logged to `logs/system.log`.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          chat_id: { type: 'string', description: 'Group JID ending in @g.us. Must be in access.groups.' },
+          participants: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Array of user JIDs to add (e.g. "5491155556666@s.whatsapp.net"). Max 50 per call. If you only have phone numbers, run check_number_exists first to resolve the canonical JIDs.',
+          },
+        },
+        required: ['chat_id', 'participants'],
+      },
+    },
+    {
+      name: 'remove_participants',
+      description: 'Remove one or more participants from a WhatsApp group via Baileys `groupParticipantsUpdate` with action `remove`. Returns per-participant status. Bot must be an admin of the group. Group must be in the access allowlist. Logged to `logs/system.log`.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          chat_id: { type: 'string', description: 'Group JID ending in @g.us. Must be in access.groups.' },
+          participants: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Array of user JIDs to remove. Max 50 per call.',
+          },
+        },
+        required: ['chat_id', 'participants'],
+      },
+    },
+    {
+      name: 'promote_admins',
+      description: 'Promote one or more group members to admin via Baileys `groupParticipantsUpdate` with action `promote`. Returns per-participant status. Bot must be admin of the group (preferably super admin). Group must be in the access allowlist. Logged to `logs/system.log`.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          chat_id: { type: 'string', description: 'Group JID ending in @g.us. Must be in access.groups.' },
+          participants: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Array of user JIDs to promote to admin. Max 50 per call. Must already be members of the group.',
+          },
+        },
+        required: ['chat_id', 'participants'],
+      },
+    },
+    {
+      name: 'demote_admins',
+      description: 'Demote one or more admin members back to regular participants via Baileys `groupParticipantsUpdate` with action `demote`. Returns per-participant status. Bot must be admin. Cannot demote the super admin (group creator). Group must be in the access allowlist. Logged to `logs/system.log`.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          chat_id: { type: 'string', description: 'Group JID ending in @g.us. Must be in access.groups.' },
+          participants: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Array of admin JIDs to demote. Max 50 per call. Must currently be admins.',
+          },
+        },
+        required: ['chat_id', 'participants'],
+      },
+    },
+    {
+      name: 'leave_group',
+      description: 'Bot leaves a WhatsApp group via Baileys `groupLeave`. Destructive — to re-enter the group the bot needs an invite from a current member. After leaving, the group entry is automatically removed from `access.groups` (the bot can no longer interact with it). Group must currently be in the access allowlist. Logged to `logs/system.log`.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          chat_id: { type: 'string', description: 'Group JID ending in @g.us. Must be in access.groups.' },
+        },
+        required: ['chat_id'],
+      },
+    },
+    {
+      name: 'toggle_group_ephemeral',
+      description: 'Set or clear the disappearing-messages timer for a WhatsApp group via Baileys `groupToggleEphemeral`. Accepts any non-negative number of seconds; common WhatsApp presets are 0 (off), 86400 (24h), 604800 (7d), 2592000 (30d), 7776000 (90d). Bot typically must be admin. Group must be in `access.groups`. Logged to `logs/system.log`.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          chat_id: { type: 'string', description: 'Group JID ending in @g.us. Must be in access.groups.' },
+          duration_seconds: { type: 'number', description: 'Ephemeral message timer in seconds. 0 = disable. Common values: 86400 (24h), 604800 (7d), 2592000 (30d), 7776000 (90d).' },
+        },
+        required: ['chat_id', 'duration_seconds'],
+      },
+    },
+    {
+      name: 'handle_join_request',
+      description: 'Manage pending join requests for a WhatsApp group with restricted-add settings. Single tool with three actions: `list` (returns pending request JIDs + method), `approve` (admits one or more JIDs), `reject` (denies them). Bot must be admin. Group must be in `access.groups`. Approve/reject calls are logged to `logs/system.log`.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          chat_id: { type: 'string', description: 'Group JID ending in @g.us. Must be in access.groups.' },
+          action: { type: 'string', enum: ['list', 'approve', 'reject'], description: '`list` = enumerate pending requests. `approve` / `reject` = act on the JIDs in `participants`.' },
+          participants: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Required when action is `approve` or `reject`. Array of user JIDs to act on. Max 50 per call. Get them via action `list` first.',
+          },
+        },
+        required: ['chat_id', 'action'],
+      },
+    },
+    {
+      name: 'create_group',
+      description: 'Create a new WhatsApp group via Baileys `groupCreate`. The bot becomes super admin. The new group is automatically added to `access.groups` in open mode (no mention required, no member restrictions) so the bot can interact with it immediately — no extra `/whatsapp:access group-add` step required. Returns the new group JID and basic info. Logged to `logs/system.log`.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          subject: { type: 'string', description: 'Group name. Required, non-empty.' },
+          participants: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Initial members as user JIDs. Can be empty (bot-only group, add members later via add_participants). Max 50 per call.',
+          },
+        },
+        required: ['subject'],
+      },
+    },
+    {
+      name: 'join_group',
+      description: 'Join a WhatsApp group via an invite code or invite link using Baileys `groupAcceptInvite`. Accepts either the 8-character invite code or the full invite URL (e.g. https://chat.whatsapp.com/AbCdEf12345678) — the URL form gets parsed automatically. The joined group is automatically added to `access.groups` in open mode. Returns the joined group JID. Logged to `logs/system.log`.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          invite: { type: 'string', description: 'Either the 8-char invite code or the full chat.whatsapp.com URL.' },
+        },
+        required: ['invite'],
+      },
+    },
+    {
+      name: 'get_invite_code',
+      description: 'Get the current invite code for a WhatsApp group via Baileys `groupInviteCode`. Returns the 8-character code; the full invite URL is `https://chat.whatsapp.com/<code>`. Bot must be admin. Group must be in `access.groups`.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          chat_id: { type: 'string', description: 'Group JID ending in @g.us. Must be in access.groups.' },
+        },
+        required: ['chat_id'],
+      },
+    },
+    {
+      name: 'revoke_invite_code',
+      description: 'Revoke the current invite code for a WhatsApp group and generate a new one, via Baileys `groupRevokeInvite`. Returns the new 8-character code. The old invite link stops working immediately. Bot must be admin. Group must be in `access.groups`. Logged to `logs/system.log`.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          chat_id: { type: 'string', description: 'Group JID ending in @g.us. Must be in access.groups.' },
+        },
+        required: ['chat_id'],
+      },
+    },
   ],
 }))
 
@@ -2016,6 +2256,75 @@ function assertAllowedChat(chatId: string) {
   }
 
   throw new Error(`Chat ${chatId} is not in the allowed list. Only paired/allowed chats can receive messages.`)
+}
+
+// Validate that a JID is a group AND is in the access allowlist. Used by all
+// group admin operations. Stricter than assertAllowedChat because group admin
+// ops have no meaning for DM JIDs.
+function assertAllowedGroup(jid: string) {
+  if (!jid.endsWith('@g.us')) {
+    throw new Error(`Not a group JID: ${jid}. Group operations require a JID ending in @g.us.`)
+  }
+  const access = loadAccess()
+  if (!access.groups[jid]) {
+    throw new Error(`Group ${jid} is not in the access allowlist. Add it via /whatsapp:access group-add ${jid} before running group operations.`)
+  }
+}
+
+// Auto-register a freshly created or joined group into access.groups in open
+// mode (no mention required, no member restriction). Without this, the bot
+// would not be able to interact with a group it just created or joined until
+// the user manually ran /whatsapp:access group-add. Best-effort: failures are
+// logged but never propagated, since the group operation itself already
+// succeeded.
+function autoRegisterGroup(jid: string) {
+  if (!jid.endsWith('@g.us')) return
+  try {
+    const access = loadAccess()
+    if (access.groups[jid]) return
+    access.groups[jid] = { requireMention: false, allowFrom: [] }
+    saveAccess(access)
+    syslog(`auto-registered new group ${jid} to access.groups (open mode)`)
+  } catch (err) {
+    syslog(`auto-register failed for ${jid}: ${err}`)
+  }
+}
+
+// Format a per-participant result from groupParticipantsUpdate into a marker
+// + human-readable label. WhatsApp returns standard HTTP-style status codes
+// per participant; the meaning of `409` differs by action (already-in vs
+// not-in group), so the action is part of the signature.
+function formatParticipantStatus(
+  status: string,
+  action: 'add' | 'remove' | 'promote' | 'demote',
+): { marker: string; label: string } {
+  switch (status) {
+    case '200':
+      return {
+        marker: '✅',
+        label:
+          action === 'add' ? 'added'
+          : action === 'remove' ? 'removed'
+          : action === 'promote' ? 'promoted'
+          : 'demoted',
+      }
+    case '401':
+    case '403':
+      return { marker: '❌', label: 'permission denied (bot must be admin)' }
+    case '404':
+      return { marker: '❌', label: 'not found / invalid number' }
+    case '408':
+      return { marker: '⚠️', label: 'timeout' }
+    case '409':
+      return {
+        marker: '⚠️',
+        label: action === 'add' ? 'already in group' : 'not in group',
+      }
+    case '500':
+      return { marker: '❌', label: 'server error' }
+    default:
+      return { marker: '⚠️', label: 'unknown status' }
+  }
 }
 
 mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
@@ -2622,6 +2931,531 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       })
 
       return { content: [{ type: 'text', text: lines.join('\n').trimEnd() }] }
+    }
+
+    case 'block_contact': {
+      if (!sock) throw new Error('WhatsApp is not connected')
+      const chat_id = (args as any).chat_id as string
+      if (!chat_id || typeof chat_id !== 'string') throw new Error('chat_id is required')
+      if (!chat_id.endsWith('@s.whatsapp.net') && !chat_id.endsWith('@lid')) {
+        throw new Error(`Not a user JID: ${chat_id}. block_contact only works on user JIDs (ending in @s.whatsapp.net or @lid), not groups. If you only have a phone number, run check_number_exists first.`)
+      }
+
+      try {
+        await (sock as any).updateBlockStatus(chat_id, 'block')
+      } catch (err) {
+        throw new Error(`Failed to block ${chat_id}: ${err}`)
+      }
+
+      syslog(`block_contact: blocked ${chat_id}`)
+      return { content: [{ type: 'text', text: `Blocked \`${chat_id}\`. They can no longer send you messages on WhatsApp.` }] }
+    }
+
+    case 'unblock_contact': {
+      if (!sock) throw new Error('WhatsApp is not connected')
+      const chat_id = (args as any).chat_id as string
+      if (!chat_id || typeof chat_id !== 'string') throw new Error('chat_id is required')
+      if (!chat_id.endsWith('@s.whatsapp.net') && !chat_id.endsWith('@lid')) {
+        throw new Error(`Not a user JID: ${chat_id}. unblock_contact only works on user JIDs (ending in @s.whatsapp.net or @lid), not groups.`)
+      }
+
+      try {
+        await (sock as any).updateBlockStatus(chat_id, 'unblock')
+      } catch (err) {
+        throw new Error(`Failed to unblock ${chat_id}: ${err}`)
+      }
+
+      syslog(`unblock_contact: unblocked ${chat_id}`)
+      return { content: [{ type: 'text', text: `Unblocked \`${chat_id}\`. They can now send you messages on WhatsApp again. Note: this does NOT re-add them to the plugin's access allowlist — use /whatsapp:access pair or allow for that.` }] }
+    }
+
+    case 'mark_read': {
+      if (!sock) throw new Error('WhatsApp is not connected')
+      const chat_id = (args as any).chat_id as string
+      if (!chat_id || typeof chat_id !== 'string') throw new Error('chat_id is required')
+      const message_ids = (args as any).message_ids
+      if (!Array.isArray(message_ids) || message_ids.length === 0) {
+        throw new Error('message_ids must be a non-empty array of message IDs')
+      }
+      if (message_ids.length > 100) {
+        throw new Error('message_ids cannot exceed 100 IDs per call')
+      }
+
+      assertAllowedChat(chat_id)
+
+      const keys = message_ids
+        .filter((id: any) => typeof id === 'string' && id.trim())
+        .map((id: string) => ({ remoteJid: chat_id, id, fromMe: false }))
+
+      if (keys.length === 0) throw new Error('No valid message IDs after validation')
+
+      try {
+        await (sock as any).readMessages(keys)
+      } catch (err) {
+        throw new Error(`readMessages failed: ${err}`)
+      }
+
+      return { content: [{ type: 'text', text: `Marked ${keys.length} message${keys.length === 1 ? '' : 's'} as read in \`${chat_id}\` (sent blue checks).` }] }
+    }
+
+    case 'update_group_subject': {
+      if (!sock) throw new Error('WhatsApp is not connected')
+      const chat_id = (args as any).chat_id as string
+      const subject = (args as any).subject as string
+      if (!chat_id || typeof chat_id !== 'string') throw new Error('chat_id is required')
+      if (!subject || typeof subject !== 'string' || !subject.trim()) {
+        throw new Error('subject is required and must be a non-empty string')
+      }
+
+      assertAllowedGroup(chat_id)
+
+      try {
+        await (sock as any).groupUpdateSubject(chat_id, subject)
+      } catch (err) {
+        throw new Error(`groupUpdateSubject failed: ${err}. Make sure the bot is an admin of the group.`)
+      }
+
+      syslog(`update_group_subject: ${chat_id} → "${subject}"`)
+      return { content: [{ type: 'text', text: `Updated subject of \`${chat_id}\` to "${subject}".` }] }
+    }
+
+    case 'update_group_description': {
+      if (!sock) throw new Error('WhatsApp is not connected')
+      const chat_id = (args as any).chat_id as string
+      if (!chat_id || typeof chat_id !== 'string') throw new Error('chat_id is required')
+      const description = (args as any).description
+      const desc = typeof description === 'string' ? description : ''
+
+      assertAllowedGroup(chat_id)
+
+      try {
+        await (sock as any).groupUpdateDescription(chat_id, desc || undefined)
+      } catch (err) {
+        throw new Error(`groupUpdateDescription failed: ${err}. Make sure the bot is an admin of the group.`)
+      }
+
+      const action = desc && desc.length > 0 ? 'updated' : 'cleared'
+      syslog(`update_group_description: ${chat_id} ${action}`)
+      return { content: [{ type: 'text', text: `${action === 'updated' ? 'Updated' : 'Cleared'} description of \`${chat_id}\`.` }] }
+    }
+
+    case 'update_group_settings': {
+      if (!sock) throw new Error('WhatsApp is not connected')
+      const chat_id = (args as any).chat_id as string
+      if (!chat_id || typeof chat_id !== 'string') throw new Error('chat_id is required')
+      const adminsOnlyMessages = (args as any).admins_only_messages
+      const adminsOnlyInfo = (args as any).admins_only_info
+      if (typeof adminsOnlyMessages !== 'boolean' && typeof adminsOnlyInfo !== 'boolean') {
+        throw new Error('At least one of admins_only_messages or admins_only_info must be provided as a boolean')
+      }
+
+      assertAllowedGroup(chat_id)
+
+      const applied: string[] = []
+      try {
+        if (typeof adminsOnlyMessages === 'boolean') {
+          await (sock as any).groupSettingUpdate(chat_id, adminsOnlyMessages ? 'announcement' : 'not_announcement')
+          applied.push(`messages: ${adminsOnlyMessages ? 'admins only' : 'everyone'}`)
+        }
+        if (typeof adminsOnlyInfo === 'boolean') {
+          await (sock as any).groupSettingUpdate(chat_id, adminsOnlyInfo ? 'locked' : 'unlocked')
+          applied.push(`info edit: ${adminsOnlyInfo ? 'admins only' : 'everyone'}`)
+        }
+      } catch (err) {
+        throw new Error(`groupSettingUpdate failed: ${err}. Make sure the bot is an admin of the group.`)
+      }
+
+      syslog(`update_group_settings: ${chat_id} — ${applied.join(', ')}`)
+      return { content: [{ type: 'text', text: `Updated settings of \`${chat_id}\`: ${applied.join('; ')}.` }] }
+    }
+
+    case 'add_participants': {
+      if (!sock) throw new Error('WhatsApp is not connected')
+      const chat_id = (args as any).chat_id as string
+      const participants = (args as any).participants
+      if (!chat_id || typeof chat_id !== 'string') throw new Error('chat_id is required')
+      if (!Array.isArray(participants) || participants.length === 0) {
+        throw new Error('participants must be a non-empty array of user JIDs')
+      }
+      if (participants.length > 50) throw new Error('participants cannot exceed 50 per call')
+
+      const validJids = participants.filter((p: any) => typeof p === 'string' && p.trim())
+      if (validJids.length === 0) throw new Error('No valid JIDs after validation')
+
+      assertAllowedGroup(chat_id)
+
+      let results: Array<{ status: string; jid: string | undefined; content: any }>
+      try {
+        results = await (sock as any).groupParticipantsUpdate(chat_id, validJids, 'add')
+      } catch (err) {
+        throw new Error(`groupParticipantsUpdate failed: ${err}. Make sure the bot is an admin of the group.`)
+      }
+
+      const lines: string[] = [`Add result for \`${chat_id}\`:`, '']
+      let added = 0, failed = 0
+      for (const r of results || []) {
+        const jid = r.jid || '(unknown)'
+        const status = String(r.status || 'unknown')
+        const { marker, label } = formatParticipantStatus(status, 'add')
+        lines.push(`${marker} \`${jid}\` — ${label} (${status})`)
+        if (status === '200') added++
+        else failed++
+      }
+
+      syslog(`add_participants: ${chat_id} — ${added} added, ${failed} failed`)
+      return { content: [{ type: 'text', text: lines.join('\n') }] }
+    }
+
+    case 'remove_participants': {
+      if (!sock) throw new Error('WhatsApp is not connected')
+      const chat_id = (args as any).chat_id as string
+      const participants = (args as any).participants
+      if (!chat_id || typeof chat_id !== 'string') throw new Error('chat_id is required')
+      if (!Array.isArray(participants) || participants.length === 0) {
+        throw new Error('participants must be a non-empty array of user JIDs')
+      }
+      if (participants.length > 50) throw new Error('participants cannot exceed 50 per call')
+
+      const validJids = participants.filter((p: any) => typeof p === 'string' && p.trim())
+      if (validJids.length === 0) throw new Error('No valid JIDs after validation')
+
+      assertAllowedGroup(chat_id)
+
+      let results: Array<{ status: string; jid: string | undefined; content: any }>
+      try {
+        results = await (sock as any).groupParticipantsUpdate(chat_id, validJids, 'remove')
+      } catch (err) {
+        throw new Error(`groupParticipantsUpdate failed: ${err}. Make sure the bot is an admin of the group.`)
+      }
+
+      const lines: string[] = [`Remove result for \`${chat_id}\`:`, '']
+      let removed = 0, failed = 0
+      for (const r of results || []) {
+        const jid = r.jid || '(unknown)'
+        const status = String(r.status || 'unknown')
+        const { marker, label } = formatParticipantStatus(status, 'remove')
+        lines.push(`${marker} \`${jid}\` — ${label} (${status})`)
+        if (status === '200') removed++
+        else failed++
+      }
+
+      syslog(`remove_participants: ${chat_id} — ${removed} removed, ${failed} failed`)
+      return { content: [{ type: 'text', text: lines.join('\n') }] }
+    }
+
+    case 'promote_admins': {
+      if (!sock) throw new Error('WhatsApp is not connected')
+      const chat_id = (args as any).chat_id as string
+      const participants = (args as any).participants
+      if (!chat_id || typeof chat_id !== 'string') throw new Error('chat_id is required')
+      if (!Array.isArray(participants) || participants.length === 0) {
+        throw new Error('participants must be a non-empty array of user JIDs')
+      }
+      if (participants.length > 50) throw new Error('participants cannot exceed 50 per call')
+
+      const validJids = participants.filter((p: any) => typeof p === 'string' && p.trim())
+      if (validJids.length === 0) throw new Error('No valid JIDs after validation')
+
+      assertAllowedGroup(chat_id)
+
+      let results: Array<{ status: string; jid: string | undefined; content: any }>
+      try {
+        results = await (sock as any).groupParticipantsUpdate(chat_id, validJids, 'promote')
+      } catch (err) {
+        throw new Error(`groupParticipantsUpdate failed: ${err}. Make sure the bot is an admin of the group.`)
+      }
+
+      const lines: string[] = [`Promote result for \`${chat_id}\`:`, '']
+      let promoted = 0, failed = 0
+      for (const r of results || []) {
+        const jid = r.jid || '(unknown)'
+        const status = String(r.status || 'unknown')
+        const { marker, label } = formatParticipantStatus(status, 'promote')
+        lines.push(`${marker} \`${jid}\` — ${label} (${status})`)
+        if (status === '200') promoted++
+        else failed++
+      }
+
+      syslog(`promote_admins: ${chat_id} — ${promoted} promoted, ${failed} failed`)
+      return { content: [{ type: 'text', text: lines.join('\n') }] }
+    }
+
+    case 'demote_admins': {
+      if (!sock) throw new Error('WhatsApp is not connected')
+      const chat_id = (args as any).chat_id as string
+      const participants = (args as any).participants
+      if (!chat_id || typeof chat_id !== 'string') throw new Error('chat_id is required')
+      if (!Array.isArray(participants) || participants.length === 0) {
+        throw new Error('participants must be a non-empty array of user JIDs')
+      }
+      if (participants.length > 50) throw new Error('participants cannot exceed 50 per call')
+
+      const validJids = participants.filter((p: any) => typeof p === 'string' && p.trim())
+      if (validJids.length === 0) throw new Error('No valid JIDs after validation')
+
+      assertAllowedGroup(chat_id)
+
+      let results: Array<{ status: string; jid: string | undefined; content: any }>
+      try {
+        results = await (sock as any).groupParticipantsUpdate(chat_id, validJids, 'demote')
+      } catch (err) {
+        throw new Error(`groupParticipantsUpdate failed: ${err}. Make sure the bot is an admin of the group.`)
+      }
+
+      const lines: string[] = [`Demote result for \`${chat_id}\`:`, '']
+      let demoted = 0, failed = 0
+      for (const r of results || []) {
+        const jid = r.jid || '(unknown)'
+        const status = String(r.status || 'unknown')
+        const { marker, label } = formatParticipantStatus(status, 'demote')
+        lines.push(`${marker} \`${jid}\` — ${label} (${status})`)
+        if (status === '200') demoted++
+        else failed++
+      }
+
+      syslog(`demote_admins: ${chat_id} — ${demoted} demoted, ${failed} failed`)
+      return { content: [{ type: 'text', text: lines.join('\n') }] }
+    }
+
+    case 'leave_group': {
+      if (!sock) throw new Error('WhatsApp is not connected')
+      const chat_id = (args as any).chat_id as string
+      if (!chat_id || typeof chat_id !== 'string') throw new Error('chat_id is required')
+
+      assertAllowedGroup(chat_id)
+
+      try {
+        await (sock as any).groupLeave(chat_id)
+      } catch (err) {
+        throw new Error(`groupLeave failed: ${err}`)
+      }
+
+      try {
+        const access = loadAccess()
+        if (access.groups[chat_id]) {
+          delete access.groups[chat_id]
+          saveAccess(access)
+        }
+      } catch (err) {
+        syslog(`leave_group: warning — failed to remove ${chat_id} from access.json: ${err}`)
+      }
+
+      syslog(`leave_group: left ${chat_id} (removed from access.groups)`)
+      return { content: [{ type: 'text', text: `Left \`${chat_id}\` and removed it from the access allowlist. To rejoin, the bot needs an invite from a current member, then run /whatsapp:access group-add ${chat_id}.` }] }
+    }
+
+    case 'toggle_group_ephemeral': {
+      if (!sock) throw new Error('WhatsApp is not connected')
+      const chat_id = (args as any).chat_id as string
+      const duration_seconds = (args as any).duration_seconds
+      if (!chat_id || typeof chat_id !== 'string') throw new Error('chat_id is required')
+      if (typeof duration_seconds !== 'number' || duration_seconds < 0 || !Number.isFinite(duration_seconds)) {
+        throw new Error('duration_seconds must be a non-negative finite number (0 to disable, or seconds: 86400 for 24h, 604800 for 7d, etc.)')
+      }
+
+      assertAllowedGroup(chat_id)
+
+      try {
+        await (sock as any).groupToggleEphemeral(chat_id, Math.floor(duration_seconds))
+      } catch (err) {
+        throw new Error(`groupToggleEphemeral failed: ${err}. Bot typically needs to be admin to change ephemeral settings.`)
+      }
+
+      const status = duration_seconds === 0 ? 'disabled' : `${Math.floor(duration_seconds)}s`
+      syslog(`toggle_group_ephemeral: ${chat_id} → ${status}`)
+      return { content: [{ type: 'text', text: `Ephemeral messages for \`${chat_id}\` set to ${status}.` }] }
+    }
+
+    case 'handle_join_request': {
+      if (!sock) throw new Error('WhatsApp is not connected')
+      const chat_id = (args as any).chat_id as string
+      const action = (args as any).action as string
+      if (!chat_id || typeof chat_id !== 'string') throw new Error('chat_id is required')
+      if (action !== 'list' && action !== 'approve' && action !== 'reject') {
+        throw new Error('action must be one of: list, approve, reject')
+      }
+
+      assertAllowedGroup(chat_id)
+
+      if (action === 'list') {
+        let pending: any
+        try {
+          pending = await (sock as any).groupRequestParticipantsList(chat_id)
+        } catch (err) {
+          throw new Error(`groupRequestParticipantsList failed: ${err}. Make sure the bot is an admin of the group.`)
+        }
+        const list: any[] = Array.isArray(pending) ? pending : []
+        if (list.length === 0) {
+          return { content: [{ type: 'text', text: `No pending join requests for \`${chat_id}\`.` }] }
+        }
+        const lines: string[] = [`Pending join requests for \`${chat_id}\`:`, '']
+        for (const r of list) {
+          const jid = r?.jid || r?.id || '(unknown)'
+          const method = r?.request_method || r?.method || 'unknown'
+          lines.push(`• \`${jid}\` — via ${method}`)
+        }
+        return { content: [{ type: 'text', text: lines.join('\n') }] }
+      }
+
+      const participants = (args as any).participants
+      if (!Array.isArray(participants) || participants.length === 0) {
+        throw new Error(`participants is required when action is "${action}"`)
+      }
+      if (participants.length > 50) throw new Error('participants cannot exceed 50 per call')
+      const validJids = participants.filter((p: any) => typeof p === 'string' && p.trim())
+      if (validJids.length === 0) throw new Error('No valid JIDs after validation')
+
+      let results: any[]
+      try {
+        results = await (sock as any).groupRequestParticipantsUpdate(chat_id, validJids, action)
+      } catch (err) {
+        throw new Error(`groupRequestParticipantsUpdate failed: ${err}. Make sure the bot is an admin of the group.`)
+      }
+
+      const verb = action === 'approve' ? 'approved' : 'rejected'
+      const lines: string[] = [`${verb.charAt(0).toUpperCase() + verb.slice(1)} result for \`${chat_id}\`:`, '']
+      let succeeded = 0, failed = 0
+      for (const r of results || []) {
+        const jid = r?.jid || '(unknown)'
+        const status = String(r?.status || 'unknown')
+        const ok = status === '200'
+        lines.push(`${ok ? '✅' : '❌'} \`${jid}\` — ${ok ? verb : 'failed'} (${status})`)
+        if (ok) succeeded++
+        else failed++
+      }
+
+      syslog(`handle_join_request: ${chat_id} action=${action} — ${succeeded} ok, ${failed} failed`)
+      return { content: [{ type: 'text', text: lines.join('\n') }] }
+    }
+
+    case 'create_group': {
+      if (!sock) throw new Error('WhatsApp is not connected')
+      const subject = (args as any).subject as string
+      const participants = (args as any).participants
+      if (!subject || typeof subject !== 'string' || !subject.trim()) {
+        throw new Error('subject is required and must be a non-empty string')
+      }
+      const initial: string[] = Array.isArray(participants)
+        ? participants.filter((p: any) => typeof p === 'string' && p.trim())
+        : []
+      if (initial.length > 50) throw new Error('participants cannot exceed 50 per call')
+
+      let metadata: any
+      try {
+        metadata = await (sock as any).groupCreate(subject, initial)
+      } catch (err) {
+        throw new Error(`groupCreate failed: ${err}`)
+      }
+
+      const newJid = metadata?.id || metadata?.gid
+      if (!newJid) throw new Error('groupCreate returned no group JID')
+
+      autoRegisterGroup(newJid)
+
+      syslog(`create_group: created "${subject}" → ${newJid} with ${initial.length} initial participant(s)`)
+      return { content: [{ type: 'text', text: `Created group "${subject}" → \`${newJid}\` with ${initial.length} initial participant${initial.length === 1 ? '' : 's'}. Auto-registered to access.groups in open mode.` }] }
+    }
+
+    case 'join_group': {
+      if (!sock) throw new Error('WhatsApp is not connected')
+      const invite = (args as any).invite as string
+      if (!invite || typeof invite !== 'string') {
+        throw new Error('invite is required (8-char code or full chat.whatsapp.com URL)')
+      }
+
+      let code = invite.trim()
+      const urlMatch = code.match(/chat\.whatsapp\.com\/([A-Za-z0-9]+)/)
+      if (urlMatch) code = urlMatch[1]
+      if (!/^[A-Za-z0-9]+$/.test(code)) {
+        throw new Error(`Invalid invite code format: "${code}". Expected an alphanumeric code or full chat.whatsapp.com URL.`)
+      }
+
+      let joinedJid: string | undefined
+      try {
+        joinedJid = await (sock as any).groupAcceptInvite(code)
+      } catch (err) {
+        throw new Error(`groupAcceptInvite failed: ${err}. The code may be expired, revoked, or invalid.`)
+      }
+
+      if (!joinedJid) {
+        throw new Error(`Could not join group with code "${code}". The code may be expired, revoked, or invalid.`)
+      }
+
+      autoRegisterGroup(joinedJid)
+
+      syslog(`join_group: joined ${joinedJid} via code ${code}`)
+      return { content: [{ type: 'text', text: `Joined group \`${joinedJid}\` via invite code \`${code}\`. Auto-registered to access.groups in open mode.` }] }
+    }
+
+    case 'get_invite_code': {
+      if (!sock) throw new Error('WhatsApp is not connected')
+      const chat_id = (args as any).chat_id as string
+      if (!chat_id || typeof chat_id !== 'string') throw new Error('chat_id is required')
+
+      assertAllowedGroup(chat_id)
+
+      let code: string | undefined
+      try {
+        code = await (sock as any).groupInviteCode(chat_id)
+      } catch (err) {
+        throw new Error(`groupInviteCode failed: ${err}. Make sure the bot is an admin of the group.`)
+      }
+
+      if (!code) throw new Error('groupInviteCode returned no code (bot may not be admin)')
+
+      return { content: [{ type: 'text', text: `Invite code for \`${chat_id}\`: \`${code}\`\nFull invite URL: https://chat.whatsapp.com/${code}` }] }
+    }
+
+    case 'revoke_invite_code': {
+      if (!sock) throw new Error('WhatsApp is not connected')
+      const chat_id = (args as any).chat_id as string
+      if (!chat_id || typeof chat_id !== 'string') throw new Error('chat_id is required')
+
+      assertAllowedGroup(chat_id)
+
+      let newCode: string | undefined
+      try {
+        newCode = await (sock as any).groupRevokeInvite(chat_id)
+      } catch (err) {
+        throw new Error(`groupRevokeInvite failed: ${err}. Make sure the bot is an admin of the group.`)
+      }
+
+      if (!newCode) throw new Error('groupRevokeInvite returned no new code (bot may not be admin)')
+
+      syslog(`revoke_invite_code: ${chat_id} → new code ${newCode}`)
+      return { content: [{ type: 'text', text: `Revoked old invite for \`${chat_id}\`. New code: \`${newCode}\`\nFull invite URL: https://chat.whatsapp.com/${newCode}` }] }
+    }
+
+    case 'archive_chat': {
+      if (!sock) throw new Error('WhatsApp is not connected')
+      if (!isDbReady()) {
+        return { content: [{ type: 'text', text: 'Local message store not available — archive_chat needs the last message from the store to build the Baileys chatModify payload.' }] }
+      }
+      const chat_id = (args as any).chat_id as string
+      if (!chat_id || typeof chat_id !== 'string') throw new Error('chat_id is required')
+      const archive = (args as any).archive
+      if (typeof archive !== 'boolean') throw new Error('archive must be a boolean (true to archive, false to unarchive)')
+
+      assertAllowedChat(chat_id)
+
+      const rows = getMessages({ chat_id, limit: 1 })
+      if (rows.length === 0) {
+        throw new Error(`No indexed messages for ${chat_id}. archive_chat needs at least one message in the local store to build the lastMessages array required by Baileys chatModify. Send or receive at least one message in the chat first, then retry.`)
+      }
+      const last = rows[0]
+      const lastMessages = [{
+        key: { remoteJid: chat_id, id: last.id, fromMe: last.direction === 'out' },
+        messageTimestamp: last.ts,
+      }]
+
+      try {
+        await (sock as any).chatModify({ archive, lastMessages }, chat_id)
+      } catch (err) {
+        throw new Error(`chatModify failed: ${err}`)
+      }
+
+      syslog(`archive_chat: ${archive ? 'archived' : 'unarchived'} ${chat_id}`)
+      return { content: [{ type: 'text', text: `${archive ? 'Archived' : 'Unarchived'} \`${chat_id}\`.` }] }
     }
 
     default:
