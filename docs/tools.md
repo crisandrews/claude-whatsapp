@@ -1214,6 +1214,421 @@ Claude calls `revoke_invite_code` with the group's `chat_id`. The old link dies;
 
 ---
 
+## `pin_chat`
+
+Pin or unpin a WhatsApp chat to the top of the chat list via Baileys' `chatModify`.
+
+**Arguments**
+
+| Field | Required | Notes |
+|---|---|---|
+| `chat_id` | ✅ | Chat JID. Must be in the access allowlist. |
+| `pin` | ✅ | `true` to pin, `false` to unpin. |
+
+**Return**
+
+A one-line confirmation: `Pinned \`<jid>\`. WhatsApp allows up to 3 pinned chats; if 3 are already pinned, the call may have failed silently.`
+
+**Pitfalls**
+
+- **3-pin limit.** WhatsApp allows max 3 pinned chats. Adding a 4th typically fails silently — the tool can't tell. Use `list_chats` to verify after.
+- **Access-gated.**
+- **Logged** to `logs/system.log`.
+
+---
+
+## `mute_chat`
+
+Mute or unmute a WhatsApp chat for a specified duration via Baileys' `chatModify`. Internally converts a relative duration in seconds to the absolute future ms-epoch that Baileys expects.
+
+**Arguments**
+
+| Field | Required | Notes |
+|---|---|---|
+| `chat_id` | ✅ | Chat JID. Must be in the access allowlist. |
+| `mute_until_seconds` | ✅ | Seconds from now until the mute expires. `0` = unmute. Common: `28800` (8h), `604800` (7d), `31536000` (1y / "always"). |
+
+**Return**
+
+A one-line confirmation: `Muted for <N>s \`<jid>\`.` or `Unmuted \`<jid>\`.`
+
+**Pitfalls**
+
+- **Server-side mute** — propagates to all linked devices, including the user's phone.
+- **Access-gated.**
+- **Logged** to `logs/system.log`.
+
+---
+
+## `delete_chat`
+
+Delete a WhatsApp chat from the user's chat list via Baileys' `chatModify` with `delete: true`. Destructive but recoverable: the chat reappears as soon as a new message arrives in it.
+
+**Arguments**
+
+| Field | Required | Notes |
+|---|---|---|
+| `chat_id` | ✅ | Chat JID. Must be in the access allowlist. |
+
+**Return**
+
+A one-line confirmation: `Deleted \`<jid>\` from the chat list. Note: the chat reappears if a new message arrives.`
+
+**Pitfalls**
+
+- **Destructive on the chat-list side.** The chat is removed from the user's WhatsApp clients. Message history is preserved server-side and reappears with the next inbound.
+- **Requires at least one indexed message** in `messages.db` to build the `lastMessages` payload Baileys requires.
+- **Access-gated.**
+- **Logged** to `logs/system.log`.
+
+---
+
+## `clear_chat`
+
+Clear all message history from a WhatsApp chat while keeping the chat itself in the list, via Baileys' `chatModify` with `clear: true`. Destructive on the message side.
+
+**Arguments**
+
+| Field | Required | Notes |
+|---|---|---|
+| `chat_id` | ✅ | Chat JID. Must be in the access allowlist. |
+
+**Return**
+
+A one-line confirmation: `Cleared message history of \`<jid>\` from your WhatsApp clients. The chat itself stays in the list.`
+
+**Pitfalls**
+
+- **Destructive — messages disappear from the user's WhatsApp clients.** The plugin's local SQLite store (`messages.db`) is unaffected; FTS, export, and history backfill keep working.
+- **Requires at least one indexed message** to build the `lastMessages` payload.
+- **Does not affect the other party's view.** Only your own clients clear.
+- **Access-gated.**
+- **Logged** to `logs/system.log`.
+
+---
+
+## `send_location`
+
+Send a static location to a chat via Baileys' `sendMessage` with a location payload.
+
+**Arguments**
+
+| Field | Required | Notes |
+|---|---|---|
+| `chat_id` | ✅ | Chat JID. Must be in the access allowlist. |
+| `latitude` | ✅ | Decimal degrees, -90 to 90. |
+| `longitude` | ✅ | Decimal degrees, -180 to 180. |
+| `name` | | Location title (e.g. `"Café Central"`). |
+| `address` | | Location subtitle / address. |
+
+**Return**
+
+A confirmation: `Sent location <lat>, <lng> (<name>) to \`<jid>\`.`
+
+**Worked example**
+
+> *"Send Juan our office location: -33.4513, -70.6653, 'Office HQ', 'Av. Apoquindo 1234'."*
+
+Claude calls `send_location` with the coords + optional metadata. The receiver sees the WhatsApp location card with title and address.
+
+**Pitfalls**
+
+- **Static, not live.** Live-location streaming is not exposed by this tool.
+- **Access-gated.**
+
+---
+
+## `send_contact`
+
+Send a contact card to a chat via Baileys' `sendMessage`. The tool builds the vCard 3.0 string from structured fields — the agent does not need to know vCard syntax.
+
+**Arguments**
+
+| Field | Required | Notes |
+|---|---|---|
+| `chat_id` | ✅ | Chat JID. Must be in the access allowlist. |
+| `name` | ✅ | Display name. |
+| `phone` | ✅ | E.164 format (with or without `+`). Non-digit characters are stripped before building the `waid` field. Must normalize to 7–15 digits. |
+| `email` | | Optional email. |
+
+**Return**
+
+A confirmation: `Sent contact card "<name>" (+<phone>) to \`<jid>\`.`
+
+**Worked example**
+
+> *"Send my dentist's contact to María: name 'Dr. Salinas', phone +56 9 8765 4321."*
+
+Claude calls `send_contact` with the structured fields; the tool produces a vCard 3.0 with the WhatsApp-ID hint (`waid`) so tapping it on the recipient's phone offers WhatsApp message / call as an option.
+
+**Pitfalls**
+
+- **vCard 3.0 only** — older clients that don't parse it gracefully might show a raw card.
+- **Single contact per call** — to send multiple, call repeatedly.
+- **Access-gated.**
+
+---
+
+## `send_link_preview`
+
+Send a text message with an explicit link-preview card (title + optional description / thumbnail) via Baileys' `sendMessage` with `linkPreview`. Use when you want guaranteed preview metadata, regardless of whether WhatsApp can fetch the URL itself.
+
+**Arguments**
+
+| Field | Required | Notes |
+|---|---|---|
+| `chat_id` | ✅ | Chat JID. Must be in the access allowlist. |
+| `text` | ✅ | Message body. Should contain or reference the URL. |
+| `url` | ✅ | Canonical URL the preview points to. |
+| `title` | ✅ | Preview title. WhatsApp rejects link previews without a title. |
+| `description` | | Optional preview description. |
+| `thumbnail_url` | | Optional thumbnail image URL (maps to WAUrlInfo `originalThumbnailUrl`). |
+
+**Return**
+
+A confirmation: `Sent link preview to \`<jid>\` for <url> ("<title>").`
+
+**Worked example**
+
+> *"Send Juan the launch announcement link with title 'Q2 Launch' and description 'Live on April 30'."*
+
+Claude calls `send_link_preview` with the URL + custom metadata. The card appears in WhatsApp with the explicit title / description rather than whatever WhatsApp would auto-fetch.
+
+**Pitfalls**
+
+- **`title` is mandatory** — Baileys / WhatsApp reject empty-title previews.
+- **For URLs WhatsApp can preview itself, just `reply` with the URL in the text** — auto-preview kicks in for most public URLs without needing this tool.
+- **Access-gated.**
+
+---
+
+## `send_voice_note`
+
+Send a voice note (push-to-talk audio message) to a WhatsApp chat. Accepts any audio file path; the tool converts it to mono 16kHz OGG Opus via ffmpeg before sending — WhatsApp requires this format for voice notes.
+
+**Arguments**
+
+| Field | Required | Notes |
+|---|---|---|
+| `chat_id` | ✅ | Chat JID. Must be in the access allowlist. |
+| `file_path` | ✅ | Absolute path to the source audio file. Any format ffmpeg can decode (mp3, wav, m4a, flac, etc.). |
+
+**Return**
+
+A confirmation with the OGG byte size: `Sent voice note to \`<jid>\` (<N> KB OGG Opus, source: <path>).`
+
+**Worked example**
+
+> *"Generate a hello in my voice and send it to Juan."*
+
+A separate TTS tool produces `/tmp/hello.wav`. Claude calls `send_voice_note` with that path; the tool converts to OGG Opus and sends.
+
+**Pitfalls**
+
+- **ffmpeg required.** Install via `brew install ffmpeg` (macOS), `apt-get install ffmpeg` (Linux), or equivalent. The tool errors with a clear hint if missing.
+- **Conversion is always run** — even if the input is already OGG. This guarantees correct codec / sample rate for WhatsApp's playback.
+- **Mono 16kHz 32kbps.** Optimized for voice intelligibility, not music quality.
+- **Source file is not auto-deleted.** The plugin's local SQLite indexes the source path in `meta.source_path` for traceability.
+- **Access-gated.**
+
+---
+
+## `send_presence`
+
+Manually send a presence update to a chat via Baileys' `sendPresenceUpdate`. Five states: `composing` (typing), `recording` (recording voice), `paused` (clear), `available` (online), `unavailable` (offline).
+
+**Arguments**
+
+| Field | Required | Notes |
+|---|---|---|
+| `chat_id` | ✅ | Chat JID. Must be in the access allowlist. |
+| `presence` | ✅ | One of `composing`, `recording`, `paused`, `available`, `unavailable`. |
+
+**Return**
+
+A one-line confirmation: `Sent presence \`<presence>\` to \`<jid>\`.`
+
+**Worked example**
+
+> *"Show María the recording indicator while you generate the voice note."*
+
+Claude calls `send_presence` with `presence: 'recording'`, then runs the TTS tool, then `send_voice_note`. María sees "recording…" while Claude prepares the audio.
+
+**Pitfalls**
+
+- **Distinct from auto-typing-on-inbound.** The plugin already auto-fires `composing` when a message arrives and `paused` after the reply is sent (see `server.ts:1055-1056`, `2069-2070`). Use this tool only for explicit overrides — e.g. setting `recording` before `send_voice_note`, or manually clearing a stuck state with `paused`.
+- **Server-side timeout.** WhatsApp clears `composing` / `recording` after ~10-15 seconds if no follow-up; pair with a real send to keep the indicator alive.
+- **Access-gated.**
+
+---
+
+## `update_profile_name`
+
+Update the bot's WhatsApp profile name (the display name other users see) via Baileys' `updateProfileName`.
+
+**Arguments**
+
+| Field | Required | Notes |
+|---|---|---|
+| `name` | ✅ | New display name. Non-empty. |
+
+**Return**
+
+A one-line confirmation: `Updated profile name to "<name>".`
+
+**Pitfalls**
+
+- **Server-side change.** Propagates to all linked devices and other users.
+- **Logged** to `logs/system.log`.
+
+---
+
+## `update_profile_status`
+
+Update the bot's WhatsApp profile status / "About" text (the short bio on the profile) via Baileys' `updateProfileStatus`. Pass an empty string to clear.
+
+**Arguments**
+
+| Field | Required | Notes |
+|---|---|---|
+| `status` | ✅ | New status text. Empty string clears it. |
+
+**Return**
+
+`Updated profile status to "<status>".` or `Cleared profile status.`
+
+**Pitfalls**
+
+- **Server-side change.**
+- **Visibility is governed by `status` privacy** (see `update_privacy`).
+- **Logged** to `logs/system.log`.
+
+---
+
+## `update_profile_picture`
+
+Update the bot's WhatsApp profile picture from a local image file via Baileys' `updateProfilePicture`.
+
+**Arguments**
+
+| Field | Required | Notes |
+|---|---|---|
+| `file_path` | ✅ | Absolute path to a JPEG or PNG image. |
+
+**Return**
+
+`Updated profile picture from <path> (<N> KB).`
+
+**Pitfalls**
+
+- **WhatsApp auto-resizes** large images server-side; very small / very large files may end up cropped or pixelated.
+- **Visibility is governed by `profile_picture` privacy** (see `update_privacy`).
+- **Logged** to `logs/system.log`.
+
+---
+
+## `remove_profile_picture`
+
+Clear the bot's WhatsApp profile picture via Baileys' `removeProfilePicture`. Falls back to WhatsApp's default avatar.
+
+**Arguments**
+
+(No arguments.)
+
+**Return**
+
+`Removed profile picture (defaulted to WhatsApp avatar).`
+
+**Pitfalls**
+
+- **Logged** to `logs/system.log`.
+
+---
+
+## `update_privacy`
+
+Update one or more of the bot's WhatsApp privacy settings via the corresponding Baileys `update*Privacy` calls. Pass any subset of the six settings; each maps to a separate Baileys call.
+
+**Arguments**
+
+| Field | Required | Notes |
+|---|---|---|
+| `last_seen` | | `all` / `contacts` / `contact_blacklist` / `none`. Who can see the "last seen" timestamp. |
+| `online` | | `all` / `match_last_seen`. Who can see online status. `match_last_seen` follows the `last_seen` setting. |
+| `profile_picture` | | `all` / `contacts` / `contact_blacklist` / `none`. Who can see the profile picture. |
+| `status` | | `all` / `contacts` / `contact_blacklist` / `none`. Who can see the profile status / About text. |
+| `read_receipts` | | `all` / `none`. Whether to send blue checks. `none` disables read receipts globally. |
+| `groups_add` | | `all` / `contacts` / `contact_blacklist`. Who can add the bot to groups. |
+
+At least one setting must be provided.
+
+**Return**
+
+`Updated privacy: <setting1>: <value1>; <setting2>: <value2>; ...`
+
+**Pitfalls**
+
+- **Settings apply sequentially.** If one fails mid-batch, earlier ones in the same call are already applied — the error message says so.
+- **Disabling read receipts disables them both ways** — the bot stops sending blue checks AND stops receiving them on outbound messages.
+- **Logged** to `logs/system.log`.
+
+---
+
+## `get_chat_analytics`
+
+Aggregate stats for a chat from the local SQLite store. Pure query — no WhatsApp roundtrip.
+
+**Arguments**
+
+| Field | Required | Notes |
+|---|---|---|
+| `chat_id` | ✅ | Chat JID. Must be in the access allowlist. |
+| `since_days` | | Optional lookback window in days. Default: all-time. |
+
+**Return**
+
+A plain-text report with sections for totals, top senders (up to 10), hourly distribution (0-23 UTC), and daily distribution (Sun-Sat) — both shown as horizontal bar charts:
+
+```
+Chat analytics for `120363xxx@g.us` (last 7 days):
+
+Total: 247 messages (213 inbound, 34 outbound)
+Unique senders: 8
+First message: 2026-04-14 09:23
+Last message: 2026-04-21 19:45
+
+Top senders (by inbound message count):
+1. Pedro Ramirez `5491155556666@s.whatsapp.net` — 67 msgs, last 2026-04-21 19:45
+2. Carlos Perez `5491155557777@s.whatsapp.net` — 54 msgs, last 2026-04-21 18:30
+...
+
+Hourly inbound activity (UTC):
+  00:                      | 0
+  ...
+  14: ████████████████████ | 32
+  ...
+
+Daily inbound activity:
+  Sun: ██                   | 12
+  Mon: ████████████████████ | 41
+  ...
+```
+
+**Worked example**
+
+> *"What hours is the team group most active?"*
+
+Claude calls `get_chat_analytics` with the group's `chat_id` and `since_days: 7`, then summarizes the hourly distribution.
+
+**Pitfalls**
+
+- **Only inbound traffic** is bucketed in the hourly / daily distribution. Outbound counts roll up into the totals but not the buckets.
+- **UTC bucketing** for hourly — convert in your head if the chat is in another timezone.
+- **Access-gated** — chat must be in the allowlist.
+- **No WhatsApp roundtrip** — pure SQLite. Fast even for large stores.
+
+---
+
 ## What's NOT a tool (yet)
 
 - **Group administration.** Creating groups, renaming them, adding or removing members, promoting admins. Do these from your phone manually — on the roadmap but not shipped.

@@ -8,6 +8,7 @@ import fs from 'fs'
 import path from 'path'
 import crypto from 'crypto'
 import os from 'os'
+import { spawnSync } from 'child_process'
 import {
   splitJid,
   matchesBot as matchesBotImpl,
@@ -30,6 +31,7 @@ import {
   listChats,
   getMessageContext,
   searchContacts,
+  getChatAnalytics,
   formatExport,
   closeDb,
   type ExportFormat,
@@ -2242,6 +2244,189 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
         required: ['chat_id'],
       },
     },
+    {
+      name: 'pin_chat',
+      description: 'Pin or unpin a WhatsApp chat to the top of the chat list via Baileys `chatModify`. WhatsApp allows up to 3 pinned chats at once; pinning a 4th may fail silently. Chat must be in the access allowlist. Logged to `logs/system.log`.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          chat_id: { type: 'string', description: 'Chat JID. Must be in the access allowlist.' },
+          pin: { type: 'boolean', description: 'true to pin, false to unpin.' },
+        },
+        required: ['chat_id', 'pin'],
+      },
+    },
+    {
+      name: 'mute_chat',
+      description: 'Mute a WhatsApp chat for N seconds, or unmute it. Uses Baileys `chatModify` with `mute: <future_ms_epoch>` to mute or `mute: null` to unmute (pass `mute_until_seconds: 0`). Chat must be in the access allowlist. Logged to `logs/system.log`.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          chat_id: { type: 'string', description: 'Chat JID. Must be in the access allowlist.' },
+          mute_until_seconds: { type: 'number', description: 'Seconds from now until the mute expires. 0 = unmute. Common values: 28800 (8h), 604800 (7d), 31536000 (1y / "always").' },
+        },
+        required: ['chat_id', 'mute_until_seconds'],
+      },
+    },
+    {
+      name: 'delete_chat',
+      description: 'Delete a WhatsApp chat from the user\'s chat list via Baileys `chatModify` with `delete: true`. Destructive — the chat is removed from view (it reappears if a new message arrives). Requires at least one indexed message in `messages.db` (Baileys needs the lastMessages key). Chat must be in the access allowlist. Logged to `logs/system.log`.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          chat_id: { type: 'string', description: 'Chat JID. Must be in the access allowlist.' },
+        },
+        required: ['chat_id'],
+      },
+    },
+    {
+      name: 'clear_chat',
+      description: 'Clear all message history from a WhatsApp chat while keeping the chat in the list, via Baileys `chatModify` with `clear: true`. Destructive — message history disappears from the user\'s WhatsApp clients. Requires at least one indexed message in `messages.db`. Chat must be in the access allowlist. Logged to `logs/system.log`.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          chat_id: { type: 'string', description: 'Chat JID. Must be in the access allowlist.' },
+        },
+        required: ['chat_id'],
+      },
+    },
+    {
+      name: 'send_location',
+      description: 'Send a static location (latitude / longitude) to a chat via Baileys `sendMessage` with a location payload. Optional name + address surface as the location title and subtitle in WhatsApp. Chat must be in the access allowlist.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          chat_id: { type: 'string', description: 'Chat JID. Must be in the access allowlist.' },
+          latitude: { type: 'number', description: 'Latitude in decimal degrees, -90 to 90.' },
+          longitude: { type: 'number', description: 'Longitude in decimal degrees, -180 to 180.' },
+          name: { type: 'string', description: 'Optional location title (e.g. "Café Central").' },
+          address: { type: 'string', description: 'Optional location subtitle / address.' },
+        },
+        required: ['chat_id', 'latitude', 'longitude'],
+      },
+    },
+    {
+      name: 'send_contact',
+      description: 'Send a contact card (vCard 3.0) to a chat via Baileys `sendMessage` with a contacts payload. The tool builds the vCard from structured fields — the agent does not need to format vCard syntax. Chat must be in the access allowlist.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          chat_id: { type: 'string', description: 'Chat JID. Must be in the access allowlist.' },
+          name: { type: 'string', description: 'Display name on the contact card.' },
+          phone: { type: 'string', description: 'Phone number in E.164 format (with or without `+`). Non-digit characters are stripped before building the WhatsApp ID.' },
+          email: { type: 'string', description: 'Optional email address.' },
+        },
+        required: ['chat_id', 'name', 'phone'],
+      },
+    },
+    {
+      name: 'send_link_preview',
+      description: 'Send a text message with an explicit link-preview card (custom title, description, optional thumbnail) attached, via Baileys `sendMessage` with `linkPreview`. Use when you want guaranteed preview metadata regardless of whether WhatsApp can fetch the URL itself, or when you want to override what WhatsApp would auto-generate. Chat must be in the access allowlist.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          chat_id: { type: 'string', description: 'Chat JID. Must be in the access allowlist.' },
+          text: { type: 'string', description: 'Message body. Should contain or reference the URL.' },
+          url: { type: 'string', description: 'Canonical URL the preview points to.' },
+          title: { type: 'string', description: 'Preview title. Required by WhatsApp — link previews without a title are rejected.' },
+          description: { type: 'string', description: 'Optional preview description / subtitle.' },
+          thumbnail_url: { type: 'string', description: 'Optional URL to a thumbnail image (maps to WAUrlInfo originalThumbnailUrl).' },
+        },
+        required: ['chat_id', 'text', 'url', 'title'],
+      },
+    },
+    {
+      name: 'send_voice_note',
+      description: 'Send a voice note (push-to-talk audio message) to a WhatsApp chat. Accepts any audio file path; the tool converts it to mono 16kHz OGG Opus via ffmpeg before sending (WhatsApp requires this format for voice notes / ptt). ffmpeg must be installed locally — the tool errors with a clear hint if not. Chat must be in the access allowlist.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          chat_id: { type: 'string', description: 'Chat JID. Must be in the access allowlist.' },
+          file_path: { type: 'string', description: 'Absolute path to the source audio file. Any format ffmpeg can decode (mp3, wav, m4a, flac, etc.) — the tool converts to OGG Opus before sending.' },
+        },
+        required: ['chat_id', 'file_path'],
+      },
+    },
+    {
+      name: 'send_presence',
+      description: 'Manually send a presence update to a chat via Baileys `sendPresenceUpdate`. Five states: `composing` (typing indicator), `recording` (recording voice indicator), `paused` (clear), `available` (online), `unavailable` (offline). Distinct from the auto-typing-on-inbound the plugin already does — this gives the agent explicit control. Chat must be in the access allowlist.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          chat_id: { type: 'string', description: 'Chat JID. Must be in the access allowlist.' },
+          presence: { type: 'string', enum: ['available', 'unavailable', 'composing', 'recording', 'paused'], description: 'composing = typing, recording = recording voice, paused = clear, available/unavailable = online state.' },
+        },
+        required: ['chat_id', 'presence'],
+      },
+    },
+    {
+      name: 'update_profile_name',
+      description: 'Update the bot\'s WhatsApp profile name (the name shown to other users) via Baileys `updateProfileName`. Logged to `logs/system.log`.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          name: { type: 'string', description: 'New profile display name. Non-empty.' },
+        },
+        required: ['name'],
+      },
+    },
+    {
+      name: 'update_profile_status',
+      description: 'Update the bot\'s WhatsApp profile status / "About" text (the short bio shown on the profile) via Baileys `updateProfileStatus`. Empty string is allowed (clears the status). Logged to `logs/system.log`.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          status: { type: 'string', description: 'New status / About text. Empty string clears it.' },
+        },
+        required: ['status'],
+      },
+    },
+    {
+      name: 'update_profile_picture',
+      description: 'Update the bot\'s WhatsApp profile picture from a local image file via Baileys `updateProfilePicture`. WhatsApp accepts JPEG / PNG; large images get auto-resized server-side. Logged to `logs/system.log`.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          file_path: { type: 'string', description: 'Absolute path to the source image file (JPEG or PNG).' },
+        },
+        required: ['file_path'],
+      },
+    },
+    {
+      name: 'remove_profile_picture',
+      description: 'Clear the bot\'s WhatsApp profile picture via Baileys `removeProfilePicture`, leaving the default avatar. Logged to `logs/system.log`.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {},
+      },
+    },
+    {
+      name: 'update_privacy',
+      description: 'Update one or more of the bot\'s WhatsApp privacy settings: `last_seen`, `online`, `profile_picture`, `status`, `read_receipts`, `groups_add`. Pass any subset; each setting maps to the corresponding Baileys `update*Privacy` call. At least one setting must be provided. Logged to `logs/system.log`.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          last_seen: { type: 'string', enum: ['all', 'contacts', 'contact_blacklist', 'none'], description: 'Who can see "last seen" timestamp.' },
+          online: { type: 'string', enum: ['all', 'match_last_seen'], description: 'Who can see online status. `match_last_seen` follows the last_seen setting.' },
+          profile_picture: { type: 'string', enum: ['all', 'contacts', 'contact_blacklist', 'none'], description: 'Who can see the profile picture.' },
+          status: { type: 'string', enum: ['all', 'contacts', 'contact_blacklist', 'none'], description: 'Who can see profile status / About text.' },
+          read_receipts: { type: 'string', enum: ['all', 'none'], description: 'Whether to send blue checks. `none` disables them entirely.' },
+          groups_add: { type: 'string', enum: ['all', 'contacts', 'contact_blacklist'], description: 'Who can add the bot to groups.' },
+        },
+      },
+    },
+    {
+      name: 'get_chat_analytics',
+      description: 'Aggregate stats for a chat from the local SQLite store: total messages, inbound vs outbound, per-sender activity (top contributors), hourly and daily distribution of inbound traffic, first / last message timestamps. Useful for "who talks the most in this group", "when is this chat most active", or general activity summaries. Optional `since_days` window restricts the analysis to the last N days. Pure SQLite, no WhatsApp roundtrip.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          chat_id: { type: 'string', description: 'Chat JID. Must be in the access allowlist.' },
+          since_days: { type: 'number', description: 'Optional lookback window in days. Default: all-time. E.g. `since_days: 7` for the last week.' },
+        },
+        required: ['chat_id'],
+      },
+    },
   ],
 }))
 
@@ -3424,6 +3609,528 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
 
       syslog(`revoke_invite_code: ${chat_id} → new code ${newCode}`)
       return { content: [{ type: 'text', text: `Revoked old invite for \`${chat_id}\`. New code: \`${newCode}\`\nFull invite URL: https://chat.whatsapp.com/${newCode}` }] }
+    }
+
+    case 'get_chat_analytics': {
+      if (!isDbReady()) {
+        return { content: [{ type: 'text', text: 'Local message store not available — get_chat_analytics disabled.' }] }
+      }
+      const chat_id = (args as any).chat_id as string
+      const since_days = (args as any).since_days
+      if (!chat_id || typeof chat_id !== 'string') throw new Error('chat_id is required')
+
+      assertAllowedChat(chat_id)
+
+      const since_ts = typeof since_days === 'number' && since_days > 0
+        ? Math.floor(Date.now() / 1000 - since_days * 86400)
+        : undefined
+
+      const analytics = getChatAnalytics(chat_id, since_ts)
+      if (!analytics) {
+        throw new Error(`getChatAnalytics failed for ${chat_id}`)
+      }
+
+      if (analytics.total_messages === 0) {
+        const windowDesc = since_days ? ` in the last ${since_days} day${since_days === 1 ? '' : 's'}` : ''
+        return { content: [{ type: 'text', text: `No indexed messages for \`${chat_id}\`${windowDesc}.` }] }
+      }
+
+      const fmtTs = (ts: number | null) => ts ? new Date(ts * 1000).toISOString().replace('T', ' ').slice(0, 16) : '(none)'
+      const lines: string[] = []
+      const windowDesc = since_days ? ` (last ${since_days} day${since_days === 1 ? '' : 's'})` : ' (all-time)'
+      lines.push(`Chat analytics for \`${chat_id}\`${windowDesc}:`, '')
+      lines.push(`Total: ${analytics.total_messages} messages (${analytics.inbound_count} inbound, ${analytics.outbound_count} outbound)`)
+      lines.push(`Unique senders: ${analytics.unique_senders}`)
+      lines.push(`First message: ${fmtTs(analytics.first_message_ts)}`)
+      lines.push(`Last message: ${fmtTs(analytics.last_message_ts)}`)
+
+      if (analytics.per_sender.length > 0) {
+        lines.push('', `Top senders (by inbound message count):`)
+        const top = analytics.per_sender.slice(0, 10)
+        top.forEach((s, i) => {
+          const name = s.push_name || '(no push name)'
+          lines.push(`${i + 1}. ${name} \`${s.sender_id}\` — ${s.message_count} msgs, last ${fmtTs(s.last_seen_ts)}`)
+        })
+        if (analytics.per_sender.length > 10) lines.push(`   ... and ${analytics.per_sender.length - 10} more sender${analytics.per_sender.length - 10 === 1 ? '' : 's'}`)
+      }
+
+      const maxHourly = Math.max(...analytics.hourly_distribution, 1)
+      lines.push('', 'Hourly inbound activity (UTC):')
+      for (let h = 0; h < 24; h++) {
+        const count = analytics.hourly_distribution[h]
+        const barLen = Math.round((count / maxHourly) * 20)
+        const bar = '█'.repeat(barLen)
+        lines.push(`  ${String(h).padStart(2, '0')}: ${bar.padEnd(20, ' ')} | ${count}`)
+      }
+
+      const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+      const maxDaily = Math.max(...analytics.daily_distribution, 1)
+      lines.push('', 'Daily inbound activity:')
+      for (let d = 0; d < 7; d++) {
+        const count = analytics.daily_distribution[d]
+        const barLen = Math.round((count / maxDaily) * 20)
+        const bar = '█'.repeat(barLen)
+        lines.push(`  ${dayNames[d]}: ${bar.padEnd(20, ' ')} | ${count}`)
+      }
+
+      return { content: [{ type: 'text', text: lines.join('\n') }] }
+    }
+
+    case 'update_profile_name': {
+      if (!sock) throw new Error('WhatsApp is not connected')
+      const name = (args as any).name as string
+      if (!name || typeof name !== 'string' || !name.trim()) {
+        throw new Error('name is required and must be a non-empty string')
+      }
+      try {
+        await (sock as any).updateProfileName(name)
+      } catch (err) {
+        throw new Error(`updateProfileName failed: ${err}`)
+      }
+      syslog(`update_profile_name: → "${name}"`)
+      return { content: [{ type: 'text', text: `Updated profile name to "${name}".` }] }
+    }
+
+    case 'update_profile_status': {
+      if (!sock) throw new Error('WhatsApp is not connected')
+      const status = (args as any).status
+      if (typeof status !== 'string') {
+        throw new Error('status is required (string; empty string clears it)')
+      }
+      try {
+        await (sock as any).updateProfileStatus(status)
+      } catch (err) {
+        throw new Error(`updateProfileStatus failed: ${err}`)
+      }
+      syslog(`update_profile_status: → "${status}"`)
+      return { content: [{ type: 'text', text: status ? `Updated profile status to "${status}".` : 'Cleared profile status.' }] }
+    }
+
+    case 'update_profile_picture': {
+      if (!sock) throw new Error('WhatsApp is not connected')
+      const file_path = (args as any).file_path as string
+      if (!file_path || typeof file_path !== 'string') throw new Error('file_path is required')
+      if (!fs.existsSync(file_path)) throw new Error(`Image file not found: ${file_path}`)
+
+      const myJid = (sock as any).user?.id
+      if (!myJid) throw new Error('Bot JID not available — connection may not be ready')
+
+      const buffer = fs.readFileSync(file_path)
+
+      try {
+        await (sock as any).updateProfilePicture(myJid, buffer)
+      } catch (err) {
+        throw new Error(`updateProfilePicture failed: ${err}. Make sure the file is a valid JPEG or PNG image.`)
+      }
+
+      syslog(`update_profile_picture: from ${file_path} (${buffer.length} bytes)`)
+      return { content: [{ type: 'text', text: `Updated profile picture from ${file_path} (${(buffer.length / 1024).toFixed(1)} KB).` }] }
+    }
+
+    case 'remove_profile_picture': {
+      if (!sock) throw new Error('WhatsApp is not connected')
+      const myJid = (sock as any).user?.id
+      if (!myJid) throw new Error('Bot JID not available — connection may not be ready')
+
+      try {
+        await (sock as any).removeProfilePicture(myJid)
+      } catch (err) {
+        throw new Error(`removeProfilePicture failed: ${err}`)
+      }
+
+      syslog('remove_profile_picture: cleared')
+      return { content: [{ type: 'text', text: 'Removed profile picture (defaulted to WhatsApp avatar).' }] }
+    }
+
+    case 'update_privacy': {
+      if (!sock) throw new Error('WhatsApp is not connected')
+      const last_seen = (args as any).last_seen
+      const online = (args as any).online
+      const profile_picture = (args as any).profile_picture
+      const status_privacy = (args as any).status
+      const read_receipts = (args as any).read_receipts
+      const groups_add = (args as any).groups_add
+
+      const provided = [last_seen, online, profile_picture, status_privacy, read_receipts, groups_add]
+        .filter((v) => v !== undefined)
+
+      if (provided.length === 0) {
+        throw new Error('At least one privacy setting must be provided (last_seen, online, profile_picture, status, read_receipts, or groups_add)')
+      }
+
+      const validPrivacy = ['all', 'contacts', 'contact_blacklist', 'none']
+      const validOnline = ['all', 'match_last_seen']
+      const validReadReceipts = ['all', 'none']
+      const validGroupsAdd = ['all', 'contacts', 'contact_blacklist']
+
+      const applied: string[] = []
+      try {
+        if (last_seen !== undefined) {
+          if (!validPrivacy.includes(last_seen)) throw new Error(`last_seen must be one of: ${validPrivacy.join(', ')}`)
+          await (sock as any).updateLastSeenPrivacy(last_seen)
+          applied.push(`last_seen: ${last_seen}`)
+        }
+        if (online !== undefined) {
+          if (!validOnline.includes(online)) throw new Error(`online must be one of: ${validOnline.join(', ')}`)
+          await (sock as any).updateOnlinePrivacy(online)
+          applied.push(`online: ${online}`)
+        }
+        if (profile_picture !== undefined) {
+          if (!validPrivacy.includes(profile_picture)) throw new Error(`profile_picture must be one of: ${validPrivacy.join(', ')}`)
+          await (sock as any).updateProfilePicturePrivacy(profile_picture)
+          applied.push(`profile_picture: ${profile_picture}`)
+        }
+        if (status_privacy !== undefined) {
+          if (!validPrivacy.includes(status_privacy)) throw new Error(`status must be one of: ${validPrivacy.join(', ')}`)
+          await (sock as any).updateStatusPrivacy(status_privacy)
+          applied.push(`status: ${status_privacy}`)
+        }
+        if (read_receipts !== undefined) {
+          if (!validReadReceipts.includes(read_receipts)) throw new Error(`read_receipts must be one of: ${validReadReceipts.join(', ')}`)
+          await (sock as any).updateReadReceiptsPrivacy(read_receipts)
+          applied.push(`read_receipts: ${read_receipts}`)
+        }
+        if (groups_add !== undefined) {
+          if (!validGroupsAdd.includes(groups_add)) throw new Error(`groups_add must be one of: ${validGroupsAdd.join(', ')}`)
+          await (sock as any).updateGroupsAddPrivacy(groups_add)
+          applied.push(`groups_add: ${groups_add}`)
+        }
+      } catch (err) {
+        throw new Error(`Privacy update failed (some earlier settings in this batch may already be applied): ${err}`)
+      }
+
+      syslog(`update_privacy: ${applied.join(', ')}`)
+      return { content: [{ type: 'text', text: `Updated privacy: ${applied.join('; ')}.` }] }
+    }
+
+    case 'send_voice_note': {
+      if (!sock) throw new Error('WhatsApp is not connected')
+      const chat_id = (args as any).chat_id as string
+      const file_path = (args as any).file_path as string
+      if (!chat_id || typeof chat_id !== 'string') throw new Error('chat_id is required')
+      if (!file_path || typeof file_path !== 'string') throw new Error('file_path is required (absolute path to a source audio file)')
+
+      assertAllowedChat(chat_id)
+
+      if (!fs.existsSync(file_path)) {
+        throw new Error(`Audio file not found: ${file_path}`)
+      }
+
+      const tmpOgg = path.join(os.tmpdir(), `voice-${Date.now()}-${Math.floor(Math.random() * 1e6)}.ogg`)
+      let oggBuffer: Buffer
+      try {
+        const result = spawnSync('ffmpeg', [
+          '-y',
+          '-i', file_path,
+          '-c:a', 'libopus',
+          '-b:a', '32k',
+          '-application', 'voip',
+          '-ac', '1',
+          '-ar', '16000',
+          tmpOgg,
+        ], { encoding: 'utf8' })
+        if (result.error || result.status !== 0) {
+          const stderr = (result.stderr || '').toString().slice(-300)
+          throw new Error(`ffmpeg conversion failed: ${result.error?.message || stderr || 'unknown error'}. Make sure ffmpeg is installed (brew install ffmpeg / apt-get install ffmpeg) and the input file is a valid audio file.`)
+        }
+        oggBuffer = fs.readFileSync(tmpOgg)
+      } finally {
+        try { fs.unlinkSync(tmpOgg) } catch {}
+      }
+
+      let sent: any
+      try {
+        sent = await sock.sendMessage(chat_id, {
+          audio: oggBuffer,
+          mimetype: 'audio/ogg; codecs=opus',
+          ptt: true,
+        } as any)
+      } catch (err) {
+        throw new Error(`sendMessage (voice note) failed: ${err}`)
+      }
+
+      if (sent?.key?.id) {
+        indexMessage({
+          id: sent.key.id,
+          chat_id,
+          sender_id: botJidLocal && botJidNamespace ? `${botJidLocal}@${botJidNamespace}` : null,
+          push_name: 'Claude',
+          ts: Math.floor(Date.now() / 1000),
+          direction: 'out',
+          text: `[Voice note sent]`,
+          meta: { kind: 'voice', source_path: file_path, bytes: String(oggBuffer.length) },
+        })
+      }
+
+      syslog(`send_voice_note: ${chat_id} from ${file_path} (${oggBuffer.length} bytes OGG)`)
+      return { content: [{ type: 'text', text: `Sent voice note to \`${chat_id}\` (${(oggBuffer.length / 1024).toFixed(1)} KB OGG Opus, source: ${file_path}).` }] }
+    }
+
+    case 'send_presence': {
+      if (!sock) throw new Error('WhatsApp is not connected')
+      const chat_id = (args as any).chat_id as string
+      const presence = (args as any).presence as string
+      if (!chat_id || typeof chat_id !== 'string') throw new Error('chat_id is required')
+      const validPresences = ['available', 'unavailable', 'composing', 'recording', 'paused']
+      if (!validPresences.includes(presence)) {
+        throw new Error(`presence must be one of: ${validPresences.join(', ')}`)
+      }
+
+      assertAllowedChat(chat_id)
+
+      try {
+        await (sock as any).sendPresenceUpdate(presence, chat_id)
+      } catch (err) {
+        throw new Error(`sendPresenceUpdate failed: ${err}`)
+      }
+
+      return { content: [{ type: 'text', text: `Sent presence \`${presence}\` to \`${chat_id}\`.` }] }
+    }
+
+    case 'send_location': {
+      if (!sock) throw new Error('WhatsApp is not connected')
+      const chat_id = (args as any).chat_id as string
+      const latitude = (args as any).latitude
+      const longitude = (args as any).longitude
+      const name = (args as any).name as string | undefined
+      const address = (args as any).address as string | undefined
+      if (!chat_id || typeof chat_id !== 'string') throw new Error('chat_id is required')
+      if (typeof latitude !== 'number' || latitude < -90 || latitude > 90) {
+        throw new Error('latitude must be a number between -90 and 90')
+      }
+      if (typeof longitude !== 'number' || longitude < -180 || longitude > 180) {
+        throw new Error('longitude must be a number between -180 and 180')
+      }
+
+      assertAllowedChat(chat_id)
+
+      const location: any = { degreesLatitude: latitude, degreesLongitude: longitude }
+      if (name) location.name = name
+      if (address) location.address = address
+
+      let sent: any
+      try {
+        sent = await sock.sendMessage(chat_id, { location })
+      } catch (err) {
+        throw new Error(`sendMessage (location) failed: ${err}`)
+      }
+
+      if (sent?.key?.id) {
+        indexMessage({
+          id: sent.key.id,
+          chat_id,
+          sender_id: botJidLocal && botJidNamespace ? `${botJidLocal}@${botJidNamespace}` : null,
+          push_name: 'Claude',
+          ts: Math.floor(Date.now() / 1000),
+          direction: 'out',
+          text: `[Location: ${latitude}, ${longitude}${name ? ' — ' + name : ''}]`,
+          meta: { kind: 'location', latitude: String(latitude), longitude: String(longitude) },
+        })
+      }
+
+      return { content: [{ type: 'text', text: `Sent location ${latitude}, ${longitude}${name ? ` (${name})` : ''} to \`${chat_id}\`.` }] }
+    }
+
+    case 'send_contact': {
+      if (!sock) throw new Error('WhatsApp is not connected')
+      const chat_id = (args as any).chat_id as string
+      const name = (args as any).name as string
+      const phone = (args as any).phone as string
+      const email = (args as any).email as string | undefined
+      if (!chat_id || typeof chat_id !== 'string') throw new Error('chat_id is required')
+      if (!name || typeof name !== 'string' || !name.trim()) throw new Error('name is required and must be non-empty')
+      if (!phone || typeof phone !== 'string') throw new Error('phone is required')
+
+      assertAllowedChat(chat_id)
+
+      const phoneDigits = phone.replace(/\D/g, '')
+      if (phoneDigits.length < 7 || phoneDigits.length > 15) {
+        throw new Error(`phone must normalize to 7–15 digits (got ${phoneDigits.length}: "${phoneDigits}")`)
+      }
+
+      const vcardLines = [
+        'BEGIN:VCARD',
+        'VERSION:3.0',
+        `FN:${name}`,
+        `TEL;type=CELL;type=VOICE;waid=${phoneDigits}:+${phoneDigits}`,
+      ]
+      if (email) vcardLines.push(`EMAIL:${email}`)
+      vcardLines.push('END:VCARD')
+      const vcard = vcardLines.join('\n')
+
+      let sent: any
+      try {
+        sent = await sock.sendMessage(chat_id, {
+          contacts: { displayName: name, contacts: [{ vcard }] },
+        })
+      } catch (err) {
+        throw new Error(`sendMessage (contact) failed: ${err}`)
+      }
+
+      if (sent?.key?.id) {
+        indexMessage({
+          id: sent.key.id,
+          chat_id,
+          sender_id: botJidLocal && botJidNamespace ? `${botJidLocal}@${botJidNamespace}` : null,
+          push_name: 'Claude',
+          ts: Math.floor(Date.now() / 1000),
+          direction: 'out',
+          text: `[Contact: ${name} +${phoneDigits}]`,
+          meta: { kind: 'contact' },
+        })
+      }
+
+      return { content: [{ type: 'text', text: `Sent contact card "${name}" (+${phoneDigits}) to \`${chat_id}\`.` }] }
+    }
+
+    case 'send_link_preview': {
+      if (!sock) throw new Error('WhatsApp is not connected')
+      const chat_id = (args as any).chat_id as string
+      const text = (args as any).text as string
+      const url = (args as any).url as string
+      const title = (args as any).title as string
+      const description = (args as any).description as string | undefined
+      const thumbnail_url = (args as any).thumbnail_url as string | undefined
+
+      if (!chat_id || typeof chat_id !== 'string') throw new Error('chat_id is required')
+      if (!text || typeof text !== 'string') throw new Error('text is required')
+      if (!url || typeof url !== 'string') throw new Error('url is required')
+      if (!title || typeof title !== 'string') throw new Error('title is required (WhatsApp rejects link previews without a title)')
+
+      assertAllowedChat(chat_id)
+
+      const linkPreview: any = {
+        'canonical-url': url,
+        'matched-text': url,
+        title,
+      }
+      if (description) linkPreview.description = description
+      if (thumbnail_url) linkPreview.originalThumbnailUrl = thumbnail_url
+
+      let sent: any
+      try {
+        sent = await sock.sendMessage(chat_id, { text, linkPreview })
+      } catch (err) {
+        throw new Error(`sendMessage (linkPreview) failed: ${err}`)
+      }
+
+      if (sent?.key?.id) {
+        indexMessage({
+          id: sent.key.id,
+          chat_id,
+          sender_id: botJidLocal && botJidNamespace ? `${botJidLocal}@${botJidNamespace}` : null,
+          push_name: 'Claude',
+          ts: Math.floor(Date.now() / 1000),
+          direction: 'out',
+          text,
+          meta: { kind: 'link_preview', url, link_title: title },
+        })
+      }
+
+      return { content: [{ type: 'text', text: `Sent link preview to \`${chat_id}\` for ${url} ("${title}").` }] }
+    }
+
+    case 'pin_chat': {
+      if (!sock) throw new Error('WhatsApp is not connected')
+      const chat_id = (args as any).chat_id as string
+      const pin = (args as any).pin
+      if (!chat_id || typeof chat_id !== 'string') throw new Error('chat_id is required')
+      if (typeof pin !== 'boolean') throw new Error('pin must be a boolean (true to pin, false to unpin)')
+
+      assertAllowedChat(chat_id)
+
+      try {
+        await (sock as any).chatModify({ pin }, chat_id)
+      } catch (err) {
+        throw new Error(`chatModify (pin) failed: ${err}`)
+      }
+
+      syslog(`pin_chat: ${chat_id} → ${pin ? 'pinned' : 'unpinned'}`)
+      return { content: [{ type: 'text', text: `${pin ? 'Pinned' : 'Unpinned'} \`${chat_id}\`. WhatsApp allows up to 3 pinned chats; if 3 are already pinned, the call may have failed silently.` }] }
+    }
+
+    case 'mute_chat': {
+      if (!sock) throw new Error('WhatsApp is not connected')
+      const chat_id = (args as any).chat_id as string
+      const mute_until_seconds = (args as any).mute_until_seconds
+      if (!chat_id || typeof chat_id !== 'string') throw new Error('chat_id is required')
+      if (typeof mute_until_seconds !== 'number' || mute_until_seconds < 0 || !Number.isFinite(mute_until_seconds)) {
+        throw new Error('mute_until_seconds must be a non-negative finite number (0 = unmute, >0 = seconds from now until mute expires)')
+      }
+
+      assertAllowedChat(chat_id)
+
+      const muteValue: number | null = mute_until_seconds === 0 ? null : Date.now() + Math.floor(mute_until_seconds) * 1000
+
+      try {
+        await (sock as any).chatModify({ mute: muteValue }, chat_id)
+      } catch (err) {
+        throw new Error(`chatModify (mute) failed: ${err}`)
+      }
+
+      const desc = muteValue === null ? 'Unmuted' : `Muted for ${Math.floor(mute_until_seconds)}s`
+      syslog(`mute_chat: ${chat_id} → ${desc.toLowerCase()}`)
+      return { content: [{ type: 'text', text: `${desc} \`${chat_id}\`.` }] }
+    }
+
+    case 'delete_chat': {
+      if (!sock) throw new Error('WhatsApp is not connected')
+      if (!isDbReady()) {
+        return { content: [{ type: 'text', text: 'Local message store not available — delete_chat needs the last message from the store to build the Baileys chatModify payload.' }] }
+      }
+      const chat_id = (args as any).chat_id as string
+      if (!chat_id || typeof chat_id !== 'string') throw new Error('chat_id is required')
+
+      assertAllowedChat(chat_id)
+
+      const rows = getMessages({ chat_id, limit: 1 })
+      if (rows.length === 0) {
+        throw new Error(`No indexed messages for ${chat_id}. delete_chat needs at least one message in the local store to build the lastMessages array required by Baileys chatModify.`)
+      }
+      const last = rows[0]
+      const lastMessages = [{
+        key: { remoteJid: chat_id, id: last.id, fromMe: last.direction === 'out' },
+        messageTimestamp: last.ts,
+      }]
+
+      try {
+        await (sock as any).chatModify({ delete: true, lastMessages }, chat_id)
+      } catch (err) {
+        throw new Error(`chatModify (delete) failed: ${err}`)
+      }
+
+      syslog(`delete_chat: deleted ${chat_id}`)
+      return { content: [{ type: 'text', text: `Deleted \`${chat_id}\` from the chat list. Note: the chat reappears if a new message arrives.` }] }
+    }
+
+    case 'clear_chat': {
+      if (!sock) throw new Error('WhatsApp is not connected')
+      if (!isDbReady()) {
+        return { content: [{ type: 'text', text: 'Local message store not available — clear_chat needs the last message from the store to build the Baileys chatModify payload.' }] }
+      }
+      const chat_id = (args as any).chat_id as string
+      if (!chat_id || typeof chat_id !== 'string') throw new Error('chat_id is required')
+
+      assertAllowedChat(chat_id)
+
+      const rows = getMessages({ chat_id, limit: 1 })
+      if (rows.length === 0) {
+        throw new Error(`No indexed messages for ${chat_id}. clear_chat needs at least one message in the local store to build the lastMessages array required by Baileys chatModify.`)
+      }
+      const last = rows[0]
+      const lastMessages = [{
+        key: { remoteJid: chat_id, id: last.id, fromMe: last.direction === 'out' },
+        messageTimestamp: last.ts,
+      }]
+
+      try {
+        await (sock as any).chatModify({ clear: true, lastMessages }, chat_id)
+      } catch (err) {
+        throw new Error(`chatModify (clear) failed: ${err}`)
+      }
+
+      syslog(`clear_chat: cleared ${chat_id}`)
+      return { content: [{ type: 'text', text: `Cleared message history of \`${chat_id}\` from your WhatsApp clients. The chat itself stays in the list.` }] }
     }
 
     case 'archive_chat': {

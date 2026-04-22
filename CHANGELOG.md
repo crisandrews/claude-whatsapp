@@ -2,6 +2,26 @@
 
 ## [Unreleased]
 
+## [1.15.0] — 2026-04-21
+
+### Added
+
+- New MCP tool `get_chat_analytics` — aggregates per-chat stats from the local SQLite store: total messages, inbound vs outbound, per-sender top contributors, hourly distribution (UTC), daily distribution (Sun-Sat), first / last message timestamps. Renders the distributions as horizontal bar charts in plain text. Supports optional `since_days` lookback window. Pure SQLite, no WhatsApp roundtrip; access-gated on chat_id.
+- New MCP tool `update_profile_name` — updates the bot's WhatsApp display name via Baileys' `updateProfileName`. Server-side change, propagates to all linked devices.
+- New MCP tool `update_profile_status` — updates (or clears with empty string) the bot's WhatsApp profile status / About text via Baileys' `updateProfileStatus`.
+- New MCP tool `update_profile_picture` — updates the bot's WhatsApp profile picture from a local JPEG / PNG image file via Baileys' `updateProfilePicture`. Uses `sock.user.id` as the self JID. WhatsApp auto-resizes large images server-side.
+- New MCP tool `remove_profile_picture` — clears the bot's WhatsApp profile picture via Baileys' `removeProfilePicture` (falls back to WhatsApp's default avatar).
+- New MCP tool `update_privacy` — updates one or more of the bot's WhatsApp privacy settings (`last_seen`, `online`, `profile_picture`, `status`, `read_receipts`, `groups_add`) in a single call. Each maps to the corresponding Baileys `update*Privacy` API. Settings apply sequentially; at least one must be provided.
+- New MCP tool `send_voice_note` — sends a voice note (push-to-talk) to a WhatsApp chat. Accepts any audio file path and converts it to mono 16kHz OGG Opus via `ffmpeg` (required for WhatsApp's voice note format) before sending. Errors with a clear "install ffmpeg" hint when the binary is missing. Indexed into `messages.db` as an outbound message with `meta.kind = "voice"` and the source path for traceability.
+- New MCP tool `send_presence` — manually sends a presence update (`composing` / `recording` / `paused` / `available` / `unavailable`) to a chat via Baileys' `sendPresenceUpdate`. Distinct from the auto-typing-on-inbound the plugin already does — this lets the agent set `recording` before sending a voice note, or manually clear a stuck typing indicator with `paused`.
+- New MCP tool `send_location` — sends a static location (latitude / longitude, optional name and address) to a chat via Baileys' `sendMessage` with a location payload. Validates the lat/lng ranges. Indexed into `messages.db` as an outbound message with `meta.kind = "location"`.
+- New MCP tool `send_contact` — sends a vCard 3.0 contact card to a chat via Baileys' `sendMessage`. Accepts structured fields (`name`, `phone`, optional `email`); the tool builds the vCard string and the WhatsApp-ID hint (`waid`) so tapping the card on the recipient's phone offers WhatsApp message / call as an option.
+- New MCP tool `send_link_preview` — sends a text message with an explicit link-preview card (custom title + optional description and thumbnail) via Baileys' `sendMessage` with `linkPreview`. Useful when you want guaranteed preview metadata, regardless of whether WhatsApp can fetch the URL itself. Title is required (WhatsApp rejects previews without one).
+- New MCP tool `pin_chat` — pins or unpins a WhatsApp chat to the top of the chat list via Baileys' `chatModify`. WhatsApp allows max 3 pinned chats; pinning a 4th may fail silently. Chat must be in the access allowlist. Logged to `logs/system.log`.
+- New MCP tool `mute_chat` — mutes a WhatsApp chat for N seconds (or unmutes it with `mute_until_seconds: 0`) via Baileys' `chatModify`. Internally converts the relative seconds duration to the absolute future ms-epoch Baileys expects. Mute syncs to all linked devices including the user's phone. Logged to `logs/system.log`.
+- New MCP tool `delete_chat` — removes a chat from the user's chat list via Baileys' `chatModify` with `delete: true`. Destructive on the chat-list side but recoverable: the chat reappears if a new message arrives. Requires at least one indexed message in `messages.db`. Access-gated. Logged to `logs/system.log`.
+- New MCP tool `clear_chat` — clears all message history from a WhatsApp chat (the chat stays in the list) via Baileys' `chatModify` with `clear: true`. Destructive — messages disappear from the user's WhatsApp clients. The plugin's local SQLite store is unaffected. Requires at least one indexed message. Access-gated. Logged to `logs/system.log`.
+
 ## [1.14.0] — 2026-04-21
 
 ### Added

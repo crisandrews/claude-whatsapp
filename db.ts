@@ -404,6 +404,103 @@ export interface ContactSearchResult {
   last_seen_ts: number
 }
 
+export interface ChatAnalytics {
+  chat_id: string
+  since_ts: number | null
+  total_messages: number
+  inbound_count: number
+  outbound_count: number
+  unique_senders: number
+  first_message_ts: number | null
+  last_message_ts: number | null
+  per_sender: Array<{ sender_id: string; push_name: string | null; message_count: number; last_seen_ts: number }>
+  hourly_distribution: number[]
+  daily_distribution: number[]
+}
+
+export function getChatAnalytics(chat_id: string, since_ts?: number): ChatAnalytics | null {
+  if (!dbInstance) return null
+  if (!chat_id) return null
+  const sinceClause = since_ts !== undefined ? 'AND ts >= @since_ts' : ''
+  const params: any = { chat_id, since_ts: since_ts ?? null }
+  try {
+    const totalRow = dbInstance.prepare(`
+      SELECT
+        COUNT(*) AS total,
+        SUM(CASE WHEN direction = 'in' THEN 1 ELSE 0 END) AS inbound,
+        SUM(CASE WHEN direction = 'out' THEN 1 ELSE 0 END) AS outbound,
+        MIN(ts) AS first_ts,
+        MAX(ts) AS last_ts
+      FROM messages WHERE chat_id = @chat_id ${sinceClause}
+    `).get(params) as any
+    if (!totalRow || !totalRow.total) {
+      return {
+        chat_id,
+        since_ts: since_ts ?? null,
+        total_messages: 0,
+        inbound_count: 0,
+        outbound_count: 0,
+        unique_senders: 0,
+        first_message_ts: null,
+        last_message_ts: null,
+        per_sender: [],
+        hourly_distribution: new Array(24).fill(0),
+        daily_distribution: new Array(7).fill(0),
+      }
+    }
+
+    const senderRows = dbInstance.prepare(`
+      SELECT
+        sender_id,
+        (SELECT push_name FROM messages WHERE sender_id = m.sender_id AND chat_id = m.chat_id AND push_name IS NOT NULL ORDER BY ts DESC LIMIT 1) AS push_name,
+        COUNT(*) AS message_count,
+        MAX(ts) AS last_seen_ts
+      FROM messages m
+      WHERE m.chat_id = @chat_id AND m.direction = 'in' AND m.sender_id IS NOT NULL ${sinceClause}
+      GROUP BY sender_id
+      ORDER BY message_count DESC
+    `).all(params) as any[]
+
+    const hourlyRows = dbInstance.prepare(`
+      SELECT CAST(strftime('%H', datetime(ts, 'unixepoch')) AS INTEGER) AS hour, COUNT(*) AS count
+      FROM messages WHERE chat_id = @chat_id AND direction = 'in' ${sinceClause}
+      GROUP BY hour
+    `).all(params) as any[]
+
+    const dailyRows = dbInstance.prepare(`
+      SELECT CAST(strftime('%w', datetime(ts, 'unixepoch')) AS INTEGER) AS dow, COUNT(*) AS count
+      FROM messages WHERE chat_id = @chat_id AND direction = 'in' ${sinceClause}
+      GROUP BY dow
+    `).all(params) as any[]
+
+    const hourly = new Array(24).fill(0)
+    for (const r of hourlyRows) hourly[r.hour] = r.count
+    const daily = new Array(7).fill(0)
+    for (const r of dailyRows) daily[r.dow] = r.count
+
+    return {
+      chat_id,
+      since_ts: since_ts ?? null,
+      total_messages: totalRow.total,
+      inbound_count: totalRow.inbound ?? 0,
+      outbound_count: totalRow.outbound ?? 0,
+      unique_senders: senderRows.length,
+      first_message_ts: totalRow.first_ts ?? null,
+      last_message_ts: totalRow.last_ts ?? null,
+      per_sender: senderRows.map((r) => ({
+        sender_id: r.sender_id,
+        push_name: r.push_name ?? null,
+        message_count: r.message_count,
+        last_seen_ts: r.last_seen_ts,
+      })),
+      hourly_distribution: hourly,
+      daily_distribution: daily,
+    }
+  } catch {
+    return null
+  }
+}
+
 export function searchContacts(
   query: string,
   limit?: number,
