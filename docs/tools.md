@@ -1629,6 +1629,75 @@ Claude calls `get_chat_analytics` with the group's `chat_id` and `since_days: 7`
 
 ---
 
+## `forward_message`
+
+Forward an existing message to another chat via Baileys' `sendMessage` with a `forward` payload. Reads the original WAMessage proto from the local SQLite store, which is cached at index time since v1.16.0+ (older messages have `raw_message=NULL` and cannot be forwarded).
+
+**Arguments**
+
+| Field | Required | Notes |
+|---|---|---|
+| `target_chat_id` | ✅ | JID of the chat to forward TO. Must be in the access allowlist. |
+| `message_id` | ✅ | Source message ID to forward. Get it from `search_messages`, `get_message_context`, or an inbound `meta.message_id`. Must have been indexed with raw_message caching (v1.16.0+). |
+
+**Return**
+
+A confirmation: `Forwarded message \`<message_id>\` (originally from \`<source_chat>\`) to \`<target_chat>\`.`
+
+**Worked example**
+
+> *"Forward the funny meme Pedro sent yesterday to María."*
+
+Claude calls `search_messages` to find the message ID, then `forward_message` with `target_chat_id` (María's JID) and the source `message_id`. The message reappears in María's chat with WhatsApp's "Forwarded" header.
+
+**Pitfalls**
+
+- **Only post-v1.16.0 messages can be forwarded.** Older indexed messages have no cached raw payload. The tool errors clearly when this happens.
+- **Text messages forward reliably; media may have edge cases.** The cached proto is round-tripped through JSON (with bigint coercion), which works perfectly for text but can lose Buffer fidelity for media keys. If a media forward fails, the tool surfaces the error — fall back to `download_attachment` + `reply` with the file as a workaround.
+- **Target chat is access-gated**, source chat is not (you can forward FROM a non-allowlisted chat as long as the message is indexed).
+- The forward is itself indexed into `messages.db` as an outbound message with `meta.kind = "forward"` and `source_message_id` for traceability.
+- **Logged** to `logs/system.log`.
+
+---
+
+## `reject_call`
+
+Reject an incoming WhatsApp call via Baileys' `rejectCall(call_id, call_from)`. Use in response to an `[Incoming call from ...]` channel notification — the notification's `meta` carries `call_id` and `call_from` exactly for this purpose.
+
+**Channel notification for incoming calls.** As of v1.16.0, the plugin surfaces every inbound call offer as a channel notification:
+
+```
+content: [Incoming call from 5491155556666@s.whatsapp.net]
+meta:
+  kind: call_offer
+  call_id: <opaque id>
+  call_from: <caller JID>
+  is_video: true|false
+  message_id: call-<call_id>
+```
+
+The agent can decide to call `reject_call` with those two meta fields, or simply ignore the notification (the call rings out / is answered elsewhere).
+
+**Arguments**
+
+| Field | Required | Notes |
+|---|---|---|
+| `call_id` | ✅ | Call ID from the notification meta (`meta.call_id`). |
+| `call_from` | ✅ | Caller JID from the notification meta (`meta.call_from`). Required by Baileys to route the rejection. |
+
+**Return**
+
+A one-line confirmation: `Rejected call \`<call_id>\` from \`<call_from>\`.`
+
+**Pitfalls**
+
+- **Reject is server-side and immediate.** No undo — the caller sees a missed-call entry.
+- **No access gate** — this is a defensive action and works regardless of whether the caller is in the allowlist.
+- **Other call lifecycle events** (accept, timeout, etc.) are best-effort logged to `logs/system.log` but are NOT surfaced as channel notifications. Only `offer` reaches the agent.
+- **Logged** to `logs/system.log`.
+
+---
+
 ## What's NOT a tool (yet)
 
 - **Group administration.** Creating groups, renaming them, adding or removing members, promoting admins. Do these from your phone manually — on the roadmap but not shipped.

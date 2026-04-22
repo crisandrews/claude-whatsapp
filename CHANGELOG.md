@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+## [1.16.0] — 2026-04-22
+
+### Added
+
+- Per-chat outbound throttle: a new `outboundDelayMs` field in `config.json` (default `200`, `0` disables) enforces a minimum delay between successive `sock.sendMessage` calls to the same `chat_id`. Anti-ban hygiene — bursts of messages to the same chat can trigger WhatsApp rate limits. Implemented as a wrap around `sock.sendMessage` at boot, so every tool that sends (reply, react, send_*, edit, delete, forward, ...) is automatically rate-limited without per-tool changes. The delay is read live from `config.json` on every call, so tuning takes effect without a server restart. Baileys' presence updates use a different API and are unaffected.
+- Incoming call notifications: the plugin now surfaces every inbound WhatsApp call offer as a `notifications/claude/channel` notification with `kind: "call_offer"`, `call_id`, `call_from`, and `is_video` in meta. The agent can decide to react via the new `reject_call` tool, or simply ignore the notification and let the call ring out / be answered on another linked device. Other call lifecycle events (accept, timeout, etc.) are best-effort logged to `logs/system.log` but not surfaced as agent notifications.
+- New MCP tool `reject_call` — rejects an incoming WhatsApp call via Baileys' `rejectCall(call_id, call_from)`. Designed to consume the `call_id` and `call_from` fields from the matching `call_offer` channel notification. No access gate — defensive action works regardless of the caller. Logged to `logs/system.log`.
+- New MCP tool `forward_message` — forwards an existing message to another chat via Baileys' `sendMessage` with a `forward` payload. Reads the original WAMessage proto from the local SQLite store; the tool is indexed into `messages.db` as an outbound message with `meta.kind = "forward"` and the source message id for traceability. Works reliably for text messages; media forwards may have edge cases due to JSON round-tripping of the cached proto.
+- WAMessage caching in `messages.db` — every inbound, outbound, and history-backfilled message now persists its raw Baileys WAMessage proto as JSON in a new `raw_message` column. Powers `forward_message` and unblocks future tools that need the full proto. Migration is idempotent (`ALTER TABLE messages ADD COLUMN raw_message TEXT` is run on initDb if the column is missing). Existing rows have `raw_message=NULL` and cannot be forwarded — only messages indexed from this version onwards.
+- Internals: `indexMessage` switched from `INSERT OR REPLACE` to UPSERT semantics with `COALESCE(excluded.raw_message, raw_message)`, so re-indexing a row (e.g. on edit) preserves the cached proto instead of clearing it. New `getRawMessage(id)` helper in `db.ts` returns the parsed proto or null.
+
 ## [1.15.0] — 2026-04-21
 
 ### Added

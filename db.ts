@@ -24,6 +24,11 @@ export interface IndexedMessage {
   direction: 'in' | 'out'
   text: string
   meta?: Record<string, string> | null
+  // Raw Baileys WAMessage proto (proto.IWebMessageInfo) cached as JSON. Used by
+  // the forward_message tool to reconstruct the original message for Baileys'
+  // sendMessage forward payload. Optional for backward compatibility — older
+  // rows have NULL and cannot be forwarded.
+  raw_message?: any
 }
 
 export interface MessageRow {
@@ -108,6 +113,18 @@ export async function initDb(dbPath: string): Promise<boolean> {
     dbInstance!.pragma('synchronous = NORMAL')
     dbInstance!.pragma('foreign_keys = ON')
     dbInstance!.exec(SCHEMA_SQL)
+
+    // Idempotent migration: add raw_message column if missing (older DBs).
+    try {
+      const cols = dbInstance!.prepare(`PRAGMA table_info(messages)`).all() as any[]
+      if (!cols.some((c) => c.name === 'raw_message')) {
+        dbInstance!.exec(`ALTER TABLE messages ADD COLUMN raw_message TEXT`)
+      }
+    } catch {
+      // Migration is best-effort; lack of raw_message just means forward_message
+      // can't be used until the schema catches up.
+    }
+
     return true
   } catch {
     dbInstance = null
@@ -128,12 +145,32 @@ export function closeDb(): void {
 let insertStmt: Statement | null = null
 function getInsertStmt(): Statement {
   if (!insertStmt) {
+    // UPSERT (not INSERT OR REPLACE) so we can COALESCE raw_message on conflict.
+    // Otherwise re-indexing a row (e.g. on edit) without raw_message would wipe
+    // the cached proto, breaking forward_message for that message.
     insertStmt = dbInstance!.prepare(`
-      INSERT OR REPLACE INTO messages (id, chat_id, sender_id, push_name, ts, direction, text, meta)
-      VALUES (@id, @chat_id, @sender_id, @push_name, @ts, @direction, @text, @meta)
+      INSERT INTO messages (id, chat_id, sender_id, push_name, ts, direction, text, meta, raw_message)
+      VALUES (@id, @chat_id, @sender_id, @push_name, @ts, @direction, @text, @meta, @raw_message)
+      ON CONFLICT(chat_id, id) DO UPDATE SET
+        sender_id = excluded.sender_id,
+        push_name = excluded.push_name,
+        ts = excluded.ts,
+        direction = excluded.direction,
+        text = excluded.text,
+        meta = excluded.meta,
+        raw_message = COALESCE(excluded.raw_message, raw_message)
     `)
   }
   return insertStmt
+}
+
+function safeStringifyRaw(raw: any): string | null {
+  if (raw === undefined || raw === null) return null
+  try {
+    return JSON.stringify(raw, (_k, v) => (typeof v === 'bigint' ? String(v) : v))
+  } catch {
+    return null
+  }
 }
 
 export function indexMessage(msg: IndexedMessage): void {
@@ -148,9 +185,27 @@ export function indexMessage(msg: IndexedMessage): void {
       direction: msg.direction,
       text: msg.text ?? '',
       meta: msg.meta ? JSON.stringify(msg.meta) : null,
+      raw_message: safeStringifyRaw(msg.raw_message),
     })
   } catch {
     // Swallow — indexing must never break the message hot path.
+  }
+}
+
+// Returns the cached WAMessage proto for a message id, parsed back from JSON,
+// or null if the row predates raw_message caching (or doesn't exist). Callers
+// should treat null as "cannot forward this message".
+export function getRawMessage(message_id: string): any | null {
+  if (!dbInstance) return null
+  if (!message_id) return null
+  try {
+    const row = dbInstance.prepare(
+      `SELECT raw_message FROM messages WHERE id = ? LIMIT 1`,
+    ).get(message_id) as any
+    if (!row || !row.raw_message) return null
+    return JSON.parse(row.raw_message)
+  } catch {
+    return null
   }
 }
 

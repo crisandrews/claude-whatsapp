@@ -119,6 +119,7 @@ All plugin configuration — flat schema, no nested objects.
 | `audioModel` | `"tiny" \| "base" \| "small"` | `"base"` (local provider only) |
 | `audioQuality` | `"fast" \| "balanced" \| "best"` | `"balanced"` (local provider only) |
 | `audioProvider` | `"local" \| "groq" \| "openai"` | `"local"` — `groq` / `openai` require the matching `GROQ_API_KEY` / `OPENAI_API_KEY` env var |
+| `outboundDelayMs` | number | `200` — per-chat outbound throttle in ms; `0` disables |
 | `chunkMode` | `"length" \| "newline"` | `"length"` |
 | `replyToMode` | `"off" \| "first" \| "all"` | `"first"` |
 | `ackReaction` | string or undefined | undefined (disabled) |

@@ -32,6 +32,7 @@ import {
   getMessageContext,
   searchContacts,
   getChatAnalytics,
+  getRawMessage,
   formatExport,
   closeDb,
   type ExportFormat,
@@ -320,6 +321,12 @@ interface PluginConfig {
   // quick succession, batch them into a single notification instead of one
   // agent turn per message. `0` disables. Default: 2000ms.
   inboundDebounceMs?: number
+
+  // Per-chat outbound throttle: minimum milliseconds between successive
+  // sock.sendMessage calls to the same chat_id. Anti-ban hygiene — bursts of
+  // messages to the same chat can trigger WhatsApp rate-limits. `0` disables.
+  // Default: 200ms.
+  outboundDelayMs?: number
 }
 
 function loadConfig(): PluginConfig {
@@ -784,6 +791,30 @@ async function connectWhatsApp() {
     logger,
   })
 
+  // Per-chat outbound throttle. Wraps sock.sendMessage so any tool that calls
+  // it (reply, react, send_*, edit, delete, forward, ...) is automatically
+  // rate-limited per chat_id. The delay is read live from config.json on every
+  // call, so changing outboundDelayMs takes effect immediately without restart.
+  // Baileys' presence updates use sendPresenceUpdate (a different API), so
+  // typing indicators are unaffected by this throttle.
+  const lastSendByChatId = new Map<string, number>()
+  const originalSendMessage = sock.sendMessage.bind(sock)
+  ;(sock as any).sendMessage = async function (jid: string, content: any, options?: any) {
+    const cfg = loadConfig()
+    const delayMs = typeof cfg.outboundDelayMs === 'number' && cfg.outboundDelayMs >= 0
+      ? cfg.outboundDelayMs
+      : 200
+    if (delayMs > 0 && jid) {
+      const lastTs = lastSendByChatId.get(jid) || 0
+      const elapsed = Date.now() - lastTs
+      if (elapsed < delayMs) {
+        await new Promise((r) => setTimeout(r, delayMs - elapsed))
+      }
+      lastSendByChatId.set(jid, Date.now())
+    }
+    return originalSendMessage(jid, content, options)
+  }
+
   // Save credentials on update — Baileys handles the actual write; we wrap
   // to re-tighten file perms after every save (creds.json and the per-key
   // files in AUTH_DIR are session secrets and should stay user-only).
@@ -997,8 +1028,47 @@ async function connectWhatsApp() {
           direction: dir,
           text,
           meta: { from_history: '1' },
+          raw_message: m,
         })
       } catch {}
+    }
+  })
+
+  // Surface incoming call offers as channel notifications so the agent can
+  // reject_call (or just let the call ring out / be answered elsewhere). Other
+  // call statuses (accept, reject, timeout) only land in system.log.
+  sock.ev.on('call', (calls: any[]) => {
+    if (!Array.isArray(calls)) return
+    for (const c of calls) {
+      try {
+        if (!c?.id || !c?.from) continue
+        const status = c.status || 'unknown'
+        if (status === 'offer') {
+          const videoTag = c.isVideo ? 'video ' : ''
+          syslog(`incoming ${videoTag}call: id=${c.id} from=${c.from}`)
+          mcp.notification({
+            method: 'notifications/claude/channel',
+            params: {
+              content: `[Incoming ${videoTag}call from ${c.from}]`,
+              meta: {
+                chat_id: c.from,
+                message_id: `call-${c.id}`,
+                user: c.from,
+                user_id: c.from,
+                ts: new Date().toISOString(),
+                kind: 'call_offer',
+                call_id: c.id,
+                call_from: c.from,
+                is_video: c.isVideo ? 'true' : 'false',
+              },
+            },
+          })
+        } else {
+          syslog(`call event: id=${c.id} from=${c.from} status=${status}`)
+        }
+      } catch (err) {
+        syslog(`call event handling error: ${err}`)
+      }
     }
   })
 
@@ -1091,6 +1161,7 @@ async function handleInbound(msg: proto.IWebMessageInfo) {
     direction: 'in',
     text,
     meta,
+    raw_message: msg,
   })
 
   // Permission relay only applies in DMs — prompts are sent exclusively to
@@ -2427,6 +2498,30 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
         required: ['chat_id'],
       },
     },
+    {
+      name: 'forward_message',
+      description: 'Forward an existing message to another chat via Baileys `sendMessage` with a `forward` payload. Reads the original WAMessage proto from the local SQLite store (cached at index time since v1.16.0+). Messages indexed before raw caching was added cannot be forwarded — the tool errors clearly. Best with text messages; media forwards may have format edge cases due to JSON round-tripping. Target chat must be in the access allowlist.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          target_chat_id: { type: 'string', description: 'JID of the chat to forward TO. Must be in the access allowlist.' },
+          message_id: { type: 'string', description: 'Source message ID to forward. Get it from `search_messages`, `get_message_context`, or an inbound `meta.message_id`. Must have been indexed with raw_message caching (v1.16.0+).' },
+        },
+        required: ['target_chat_id', 'message_id'],
+      },
+    },
+    {
+      name: 'reject_call',
+      description: 'Reject an incoming WhatsApp call via Baileys `rejectCall(call_id, call_from)`. Use in response to an `[Incoming call from ...]` channel notification — the notification meta carries `call_id` and `call_from` exactly for this. No access gate (defensive action — works regardless of who is calling). Logged to `logs/system.log`.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          call_id: { type: 'string', description: 'Call ID from the notification meta (`meta.call_id`).' },
+          call_from: { type: 'string', description: 'Caller JID from the notification meta (`meta.call_from`). Required by Baileys to route the rejection.' },
+        },
+        required: ['call_id', 'call_from'],
+      },
+    },
   ],
 }))
 
@@ -2534,6 +2629,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
           direction: 'out',
           text: body,
           meta: meta ?? null,
+          raw_message: sent,
         })
       }
 
@@ -2807,6 +2903,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
           direction: 'out',
           text: `[Poll] ${question}\n${values.map((v, i) => `${i + 1}. ${v}`).join('\n')}`,
           meta: { kind: 'poll', selectable_count: String(multi_select ? values.length : 1) },
+          raw_message: sent,
         })
       }
       logConversation('out', 'Claude', `[Poll] ${question}: ${values.join(', ')}`, { chat_id })
@@ -3611,6 +3708,68 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       return { content: [{ type: 'text', text: `Revoked old invite for \`${chat_id}\`. New code: \`${newCode}\`\nFull invite URL: https://chat.whatsapp.com/${newCode}` }] }
     }
 
+    case 'reject_call': {
+      if (!sock) throw new Error('WhatsApp is not connected')
+      const call_id = (args as any).call_id as string
+      const call_from = (args as any).call_from as string
+      if (!call_id || typeof call_id !== 'string') throw new Error('call_id is required')
+      if (!call_from || typeof call_from !== 'string') throw new Error('call_from is required')
+
+      try {
+        await (sock as any).rejectCall(call_id, call_from)
+      } catch (err) {
+        throw new Error(`rejectCall failed: ${err}`)
+      }
+
+      syslog(`reject_call: rejected ${call_id} from ${call_from}`)
+      return { content: [{ type: 'text', text: `Rejected call \`${call_id}\` from \`${call_from}\`.` }] }
+    }
+
+    case 'forward_message': {
+      if (!sock) throw new Error('WhatsApp is not connected')
+      if (!isDbReady()) {
+        return { content: [{ type: 'text', text: 'Local message store not available — forward_message disabled.' }] }
+      }
+      const target_chat_id = (args as any).target_chat_id as string
+      const message_id = (args as any).message_id as string
+      if (!target_chat_id || typeof target_chat_id !== 'string') throw new Error('target_chat_id is required')
+      if (!message_id || typeof message_id !== 'string') throw new Error('message_id is required')
+
+      assertAllowedChat(target_chat_id)
+
+      const rawMessage = getRawMessage(message_id)
+      if (!rawMessage) {
+        throw new Error(
+          `No cached raw message for \`${message_id}\`. Either the message ID is unknown, or the message was indexed before raw_message caching was added (v1.16.0+) — only newly-indexed messages can be forwarded.`,
+        )
+      }
+
+      let sent: any
+      try {
+        sent = await sock.sendMessage(target_chat_id, { forward: rawMessage } as any)
+      } catch (err) {
+        throw new Error(`sendMessage (forward) failed: ${err}. Some media types may fail due to JSON round-tripping of the cached proto — text messages are most reliable.`)
+      }
+
+      const sourceChatId = rawMessage?.key?.remoteJid || '(unknown)'
+      if (sent?.key?.id) {
+        indexMessage({
+          id: sent.key.id,
+          chat_id: target_chat_id,
+          sender_id: botJidLocal && botJidNamespace ? `${botJidLocal}@${botJidNamespace}` : null,
+          push_name: 'Claude',
+          ts: Math.floor(Date.now() / 1000),
+          direction: 'out',
+          text: `[Forwarded from ${sourceChatId}]`,
+          meta: { kind: 'forward', source_message_id: message_id, source_chat: sourceChatId },
+          raw_message: sent,
+        })
+      }
+
+      syslog(`forward_message: forwarded ${message_id} from ${sourceChatId} → ${target_chat_id}`)
+      return { content: [{ type: 'text', text: `Forwarded message \`${message_id}\` (originally from \`${sourceChatId}\`) to \`${target_chat_id}\`.` }] }
+    }
+
     case 'get_chat_analytics': {
       if (!isDbReady()) {
         return { content: [{ type: 'text', text: 'Local message store not available — get_chat_analytics disabled.' }] }
@@ -3859,6 +4018,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
           direction: 'out',
           text: `[Voice note sent]`,
           meta: { kind: 'voice', source_path: file_path, bytes: String(oggBuffer.length) },
+          raw_message: sent,
         })
       }
 
@@ -3925,6 +4085,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
           direction: 'out',
           text: `[Location: ${latitude}, ${longitude}${name ? ' — ' + name : ''}]`,
           meta: { kind: 'location', latitude: String(latitude), longitude: String(longitude) },
+          raw_message: sent,
         })
       }
 
@@ -3977,6 +4138,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
           direction: 'out',
           text: `[Contact: ${name} +${phoneDigits}]`,
           meta: { kind: 'contact' },
+          raw_message: sent,
         })
       }
 
@@ -4024,6 +4186,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
           direction: 'out',
           text,
           meta: { kind: 'link_preview', url, link_title: title },
+          raw_message: sent,
         })
       }
 

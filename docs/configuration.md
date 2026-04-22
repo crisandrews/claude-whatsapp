@@ -260,6 +260,7 @@ Field reference (all top-level, no nesting):
 | `documentFormat` | `"auto"` \| `"md"` \| `"txt"` | Filename / MIME for auto-document. Default: `"auto"`. |
 | `pairingPhone` | string \| undefined | E.164 digits (no `+`). Triggers pairing-code linking on next QR cycle. |
 | `inboundDebounceMs` | number | Sliding window (ms) to batch rapid plain-text messages from the same sender into one agent turn. `0` disables. Default: `2000`. |
+| `outboundDelayMs` | number | Per-chat outbound throttle (minimum ms between successive sends to the same `chat_id`). Anti-ban hygiene — bursts to the same chat can trigger WhatsApp rate limits. `0` disables. Default: `200`. Read live on every send, so changes take effect without a server restart. |
 
 The file is created with `0600` permissions. The skill writes it atomically (tmp + rename) so a partially-written file is never observed.
 
