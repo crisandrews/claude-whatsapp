@@ -169,31 +169,38 @@ Default policy is `pairing`. IDs are WhatsApp JIDs — format depends on your Ba
 
 ### [Tools](#tools)
 
-> *Deep dive with worked examples: [docs/tools.md](docs/tools.md).*
+> *Per-tool reference with arguments, returns, examples, and pitfalls: [docs/tools.md](docs/tools.md).*
 
-| Tool | Purpose |
-| --- | --- |
-| `reply` | Send text or files. Auto-chunks long text at 4096 chars (configurable). |
-| `react` | Emoji reaction on a message. |
-| `edit_message` | Rewrite a previously-sent message in place — no push notification, just an "edited" tag. |
-| `delete_message` | Revoke a message Claude sent. |
-| `send_poll` | Send a tappable poll with 2-12 options. |
-| `download_attachment` | Access downloaded media from the inbox. |
-| `list_chats` | Discover active conversations (DMs + groups) with last-message preview, filtered to the access allowlist. |
-| `search_messages` | Full-text search the local message store. |
-| `search_contact` | Find indexed contacts by name or phone-fragment across all allowlisted chats. |
-| `get_message_context` | Fetch N messages before + the anchor + N after — to read the surrounding thread of a search hit. |
-| `fetch_history` | Ask WhatsApp for older messages in a chat. |
-| `list_group_senders` | Participants who have spoken in a chat (from the local store, with push names). |
-| `get_group_metadata` | Live group metadata: subject, description, settings, full participant list with admin flags. |
-| `check_number_exists` | Verify whether one or more phone numbers are registered on WhatsApp (batched). |
-| `get_business_profile` | Fetch WhatsApp Business profile (description, category, email, website, hours) for a user JID. |
-| `export_chat` | Dump a chat as `markdown`, `jsonl`, or `csv` under the inbox. |
+The plugin exposes **52 MCP tools** across 12 categories. Each entry below is a single tool — see the docs for arguments and worked examples.
+
+**Messaging** — `reply`, `react`, `edit_message`, `delete_message`, `mark_read`, `send_poll`
+
+**Message types** — `send_location`, `send_contact`, `send_link_preview`, `send_voice_note`, `forward_message`, `pin_message`
+
+**Discovery & search** — `list_chats`, `search_messages`, `search_contact`, `get_message_context`, `fetch_history`, `list_group_senders`
+
+**Chat management** — `archive_chat`, `pin_chat`, `mute_chat`, `delete_chat`, `clear_chat`
+
+**Group admin (existing groups)** — `get_group_metadata`, `update_group_subject`, `update_group_description`, `update_group_settings`, `add_participants`, `remove_participants`, `promote_admins`, `demote_admins`, `leave_group`, `toggle_group_ephemeral`, `handle_join_request`
+
+**Group lifecycle** — `create_group`, `join_group`, `get_invite_code`, `revoke_invite_code`
+
+**Contacts** — `check_number_exists`, `get_business_profile`, `block_contact`, `unblock_contact`
+
+**Profile self-mgmt** — `update_profile_name`, `update_profile_status`, `update_profile_picture`, `remove_profile_picture`, `update_privacy`
+
+**Calls** — `reject_call`
+
+**Presence** — `send_presence`
+
+**Analytics & export** — `get_chat_analytics`, `export_chat`
+
+**Media** — `download_attachment`
 
 **What's NOT a plugin feature (yet)**
 
-- Inviting or removing people from a group, renaming a group, or creating a new group from Claude.
-- Sending voice notes (audio messages). Inbound voice is transcribed; outbound voice isn't.
+- Standalone install path (Smithery / non-Claude-Code MCP clients) — the plugin currently runs only inside Claude Code's plugin lifecycle.
+- WhatsApp Business catalog management, newsletters, status / story posts, view-once messages — niche features intentionally out of scope.
 
 ### [Reactions](#reactions)
 

@@ -1698,6 +1698,39 @@ A one-line confirmation: `Rejected call \`<call_id>\` from \`<call_from>\`.`
 
 ---
 
+## `pin_message`
+
+Pin or unpin a specific message in a WhatsApp chat via Baileys' `sendMessage` with a `pin` payload. WhatsApp's pin feature is per-message (separate from chat-level pinning — see `pin_chat` for that).
+
+**Arguments**
+
+| Field | Required | Notes |
+|---|---|---|
+| `chat_id` | ✅ | Chat JID where the message lives. Must be in the access allowlist. |
+| `message_id` | ✅ | ID of the message to pin or unpin. |
+| `action` | ✅ | `pin` or `unpin`. |
+| `duration_seconds` | conditional | Required when `action` is `pin`. Must be one of `86400` (24h), `604800` (7d), `2592000` (30d) — WhatsApp only allows those three. Ignored for unpin. |
+
+**Return**
+
+A one-line confirmation: `Pinned message \`<id>\` in \`<chat_id>\` for <N> day(s).` or `Unpinned message ...`
+
+**Worked example**
+
+> *"Pin Pedro's message about the meeting time for the next 7 days."*
+
+Claude resolves the message ID (from `search_messages` or recent context) and calls `pin_message` with `action: 'pin'` and `duration_seconds: 604800`.
+
+**Pitfalls**
+
+- **Three durations only.** WhatsApp does not allow custom pin durations — only 24h, 7d, or 30d. The tool rejects other values.
+- **`fromMe` is auto-resolved** from the cached WAMessage proto in `messages.db` (since v1.16.0). For messages indexed before raw caching, `fromMe` defaults to `false` — this is correct for inbound messages but wrong for outbound; if pinning an old outbound message fails, that's why.
+- **Distinct from `pin_chat`.** `pin_chat` pins the entire chat to the top of the chat list; `pin_message` pins a single message inside a chat. WhatsApp surfaces them in different UI affordances.
+- **Access-gated** on `chat_id`.
+- **Logged** to `logs/system.log`.
+
+---
+
 ## What's NOT a tool (yet)
 
 - **Group administration.** Creating groups, renaming them, adding or removing members, promoting admins. Do these from your phone manually — on the roadmap but not shipped.

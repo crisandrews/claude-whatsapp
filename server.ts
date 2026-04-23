@@ -2522,6 +2522,20 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
         required: ['call_id', 'call_from'],
       },
     },
+    {
+      name: 'pin_message',
+      description: 'Pin or unpin a specific message in a WhatsApp chat via Baileys `sendMessage` with a `pin` payload. For pin: requires a `duration_seconds` of 86400 (24h), 604800 (7d), or 2592000 (30d) — WhatsApp only allows those three values. For unpin: only chat_id + message_id. Looks up the message\'s `fromMe` flag from the local SQLite store (cached since v1.16.0); falls back to `false` for older or unknown messages. Chat must be in the access allowlist.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          chat_id: { type: 'string', description: 'JID of the chat where the message lives. Must be in the access allowlist.' },
+          message_id: { type: 'string', description: 'ID of the message to pin or unpin.' },
+          action: { type: 'string', enum: ['pin', 'unpin'], description: '`pin` to pin the message, `unpin` to remove the pin.' },
+          duration_seconds: { type: 'number', description: 'Required when action is `pin`. Must be one of: 86400 (24h), 604800 (7d), 2592000 (30d). Ignored for unpin.' },
+        },
+        required: ['chat_id', 'message_id', 'action'],
+      },
+    },
   ],
 }))
 
@@ -3706,6 +3720,51 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
 
       syslog(`revoke_invite_code: ${chat_id} → new code ${newCode}`)
       return { content: [{ type: 'text', text: `Revoked old invite for \`${chat_id}\`. New code: \`${newCode}\`\nFull invite URL: https://chat.whatsapp.com/${newCode}` }] }
+    }
+
+    case 'pin_message': {
+      if (!sock) throw new Error('WhatsApp is not connected')
+      const chat_id = (args as any).chat_id as string
+      const message_id = (args as any).message_id as string
+      const action = (args as any).action as string
+      const duration_seconds = (args as any).duration_seconds
+      if (!chat_id || typeof chat_id !== 'string') throw new Error('chat_id is required')
+      if (!message_id || typeof message_id !== 'string') throw new Error('message_id is required')
+      if (action !== 'pin' && action !== 'unpin') throw new Error('action must be "pin" or "unpin"')
+
+      assertAllowedChat(chat_id)
+
+      let time: number | undefined
+      if (action === 'pin') {
+        const validDurations = [86400, 604800, 2592000]
+        if (typeof duration_seconds !== 'number' || !validDurations.includes(duration_seconds)) {
+          throw new Error('duration_seconds is required for action=pin and must be one of: 86400 (24h), 604800 (7d), 2592000 (30d)')
+        }
+        time = duration_seconds
+      }
+
+      // Resolve fromMe from the cached WAMessage proto; default false if unknown.
+      let fromMe = false
+      if (isDbReady()) {
+        const raw = getRawMessage(message_id)
+        if (raw?.key?.fromMe !== undefined) fromMe = !!raw.key.fromMe
+      }
+
+      const key = { remoteJid: chat_id, id: message_id, fromMe }
+      // proto.PinInChat.Type — 1 = PIN_FOR_ALL, 2 = UNPIN_FOR_ALL.
+      const type = action === 'pin' ? 1 : 2
+
+      try {
+        const payload: any = { pin: key, type }
+        if (time !== undefined) payload.time = time
+        await sock.sendMessage(chat_id, payload as any)
+      } catch (err) {
+        throw new Error(`sendMessage (pin) failed: ${err}`)
+      }
+
+      syslog(`pin_message: ${action} ${message_id} in ${chat_id}${time ? ` for ${time}s` : ''}`)
+      const durLabel = time ? ` for ${time / 86400} day${time === 86400 ? '' : 's'}` : ''
+      return { content: [{ type: 'text', text: `${action === 'pin' ? 'Pinned' : 'Unpinned'} message \`${message_id}\` in \`${chat_id}\`${durLabel}.` }] }
     }
 
     case 'reject_call': {

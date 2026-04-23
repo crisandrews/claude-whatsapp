@@ -281,8 +281,12 @@ Read `$STATE_DIR/config.json`, update `documentThreshold` and/or `documentFormat
 
 Find `STATE_DIR` as above, then:
 1. Read `$STATE_DIR/status.json` and report the connection state. If `pairingPhone` is set in config, mention pairing-code mode is active.
-2. Read `$STATE_DIR/access.json` if it exists — show DM policy and allowed users count.
-3. Read `$STATE_DIR/config.json` if it exists — report audio transcription state and `audioProvider` (default `local`), `chunkMode`, `replyToMode`, `ackReaction`, `documentThreshold`/`documentFormat` if set.
+2. Read `$STATE_DIR/access.json` if it exists — show DM policy, allowed users count, and number of allowed groups.
+3. Read `$STATE_DIR/config.json` if it exists and report every populated field, grouped:
+   - **Voice** — `audioTranscription` (on/off), `audioProvider` (default `local`), `audioModel` (default `base`), `audioQuality` (default `balanced`), `audioLanguage`.
+   - **Inbound** — `inboundDebounceMs` (default `2000`).
+   - **Outbound shaping** — `chunkMode` (default `length`), `replyToMode` (default `first`), `ackReaction` (if set), `documentThreshold`/`documentFormat` (if set), `outboundDelayMs` (default `200`, anti-ban throttle).
+   - **Pairing** — `pairingPhone` if set.
 4. Read `$STATE_DIR/transcriber-status.json` if it exists — report transcriber state (loading/ready/error/disabled) and the active provider field if present.
 
 ## Important

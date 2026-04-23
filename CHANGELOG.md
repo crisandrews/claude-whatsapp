@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+## [1.17.0] — 2026-04-23
+
+### Added
+
+- New MCP tool `pin_message` — pins or unpins a specific message in a WhatsApp chat via Baileys' `sendMessage` with a `pin` payload. WhatsApp accepts only three pin durations (`86400` = 24h, `604800` = 7d, `2592000` = 30d); the tool validates. The `fromMe` flag is auto-resolved from the cached WAMessage proto in `messages.db` (defaults to `false` for messages indexed before raw caching). Distinct from `pin_chat` (which pins the entire chat to the top of the chat list). Closes the last benchmark gap.
+- Test coverage for `db.ts` — new `db.test.ts` adds 20 unit tests covering `listChats`, `getMessageContext`, `searchContacts`, `getChatAnalytics`, `getRawMessage`, `getChatSenders`. Tests spin up a temp SQLite file, seed known data, assert results, and tear down — pure DB-level, no Baileys / no network. Run via `npm test` alongside the existing `lib.test.ts` (now 72 tests total). Already paid off: the test pass surfaced two real bugs (see Fixed below).
+- README tool index — the `Tools` section in `README.md` now lists all 52 tools grouped into 12 categories (Messaging, Message types, Discovery, Chat mgmt, Group admin, Group lifecycle, Contacts, Profile, Calls, Presence, Analytics, Media). Replaces the previous 10-row table that only covered the original tool set.
+- Richer `/whatsapp:configure status` output — the skill now surfaces every populated `config.json` field grouped by area (Voice, Inbound, Outbound shaping, Pairing) including newer fields (`outboundDelayMs`, `inboundDebounceMs`, `audioProvider`, `audioModel`, `audioQuality`) that previously weren't reported.
+
+### Fixed
+
+- `getChatSenders(chat_id)` (no `since_ts`) silently returned `[]` because the optional `since_ts` was passed as `undefined` in the named params object, which better-sqlite3 rejects. The function now builds the params object conditionally — `list_group_senders` calls without `since_days` work as documented.
+- `closeDb()` did not reset the cached `insertStmt` prepared statement, so re-opening the DB (e.g. in tests, or after a hypothetical reconnect) would silently fail every subsequent `indexMessage` call against a Statement still bound to the closed connection. `closeDb` now nulls `insertStmt` so `initDb` re-prepares it against the new connection.
+
 ## [1.16.0] — 2026-04-22
 
 ### Added

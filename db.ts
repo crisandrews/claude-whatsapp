@@ -140,6 +140,10 @@ export function closeDb(): void {
   if (!dbInstance) return
   try { dbInstance.close() } catch {}
   dbInstance = null
+  // Reset cached prepared statements so a subsequent initDb() rebinds them
+  // against the new connection. Without this, tests that close + reopen the
+  // DB would re-use a Statement bound to a closed connection (silent failure).
+  insertStmt = null
 }
 
 let insertStmt: Statement | null = null
@@ -296,7 +300,11 @@ export function getChatSenders(chat_id: string, since_ts?: number): ChatSender[]
   // whitelist. Push name is taken from the most recent message (a sender
   // can change push name over time).
   const conditions = ['chat_id = @chat_id', "direction = 'in'", 'sender_id IS NOT NULL']
-  if (since_ts !== undefined) conditions.push('ts >= @since_ts')
+  const params: any = { chat_id }
+  if (since_ts !== undefined) {
+    conditions.push('ts >= @since_ts')
+    params.since_ts = since_ts
+  }
   const sql = `
     SELECT
       sender_id,
@@ -311,7 +319,7 @@ export function getChatSenders(chat_id: string, since_ts?: number): ChatSender[]
     ORDER BY last_seen_ts DESC
   `
   try {
-    const rows = dbInstance.prepare(sql).all({ chat_id, since_ts }) as any[]
+    const rows = dbInstance.prepare(sql).all(params) as any[]
     return rows.map((r) => ({
       sender_id: r.sender_id,
       push_name: r.push_name ?? null,
