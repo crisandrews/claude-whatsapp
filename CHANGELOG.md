@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [1.17.1] — 2026-04-24
+
+### Added
+
+- Test coverage for the backbone `db.ts` functions: `searchMessages` (5 tests for FTS5 single-term match, chat scope, limit cap, no-match, ts ordering), `getMessages` (4 tests for chat scope, before_ts / after_ts windowing, empty), and `formatExport` (5 tests for markdown / jsonl / csv output, CSV escaping of quotes and commas, empty input, chronological ASC re-sort). 14 new tests; total now 86 across `lib.test.ts` + `db.test.ts`.
+
 ## [1.17.0] — 2026-04-23
 
 ### Added

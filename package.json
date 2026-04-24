@@ -1,6 +1,6 @@
 {
   "name": "claude-whatsapp-channel",
-  "version": "1.17.0",
+  "version": "1.17.1",
   "author": "Juan Cristobal Andrews",
   "private": true,
   "type": "module",

@@ -19,6 +19,9 @@ import {
   getChatAnalytics,
   getRawMessage,
   getChatSenders,
+  searchMessages,
+  getMessages,
+  formatExport,
 } from './db.js'
 
 // ---------------------------------------------------------------------------
@@ -326,5 +329,193 @@ test('getChatSenders — excludes outbound (Claude) and respects since_ts', asyn
     const senders = getChatSenders('120363x@g.us', 3000)
     assert.equal(senders.length, 1)
     assert.equal(senders[0].sender_id, 'carlos@s.whatsapp.net')
+  } finally { teardown(db) }
+})
+
+// ---------------------------------------------------------------------------
+// searchMessages (FTS5)
+// ---------------------------------------------------------------------------
+
+test('searchMessages — single term match returns hits', async () => {
+  const db = await setupTempDb()
+  try {
+    indexMessage({ id: 'm1', chat_id: 'a@s.whatsapp.net', ts: 1000, direction: 'in', text: 'meeting tomorrow at 10am' })
+    indexMessage({ id: 'm2', chat_id: 'a@s.whatsapp.net', ts: 1100, direction: 'in', text: 'lunch plans' })
+
+    const hits = searchMessages({ query: 'meeting' })
+    assert.equal(hits.length, 1)
+    assert.equal(hits[0].id, 'm1')
+  } finally { teardown(db) }
+})
+
+test('searchMessages — chat_id filter scopes results', async () => {
+  const db = await setupTempDb()
+  try {
+    indexMessage({ id: 'm1', chat_id: 'a@s.whatsapp.net', ts: 1000, direction: 'in', text: 'meeting' })
+    indexMessage({ id: 'm2', chat_id: 'b@s.whatsapp.net', ts: 1100, direction: 'in', text: 'meeting' })
+
+    const hits = searchMessages({ query: 'meeting', chat_id: 'a@s.whatsapp.net' })
+    assert.equal(hits.length, 1)
+    assert.equal(hits[0].chat_id, 'a@s.whatsapp.net')
+  } finally { teardown(db) }
+})
+
+test('searchMessages — limit parameter caps results', async () => {
+  const db = await setupTempDb()
+  try {
+    for (let i = 0; i < 10; i++) {
+      indexMessage({ id: `m${i}`, chat_id: 'a@s.whatsapp.net', ts: 1000 + i, direction: 'in', text: 'meeting agenda' })
+    }
+    const hits = searchMessages({ query: 'meeting', limit: 3 })
+    assert.equal(hits.length, 3)
+  } finally { teardown(db) }
+})
+
+test('searchMessages — no matches returns empty array', async () => {
+  const db = await setupTempDb()
+  try {
+    indexMessage({ id: 'm1', chat_id: 'a@s.whatsapp.net', ts: 1000, direction: 'in', text: 'lunch tomorrow' })
+    const hits = searchMessages({ query: 'pizza' })
+    assert.equal(hits.length, 0)
+  } finally { teardown(db) }
+})
+
+test('searchMessages — orders by ts DESC (most recent first)', async () => {
+  const db = await setupTempDb()
+  try {
+    indexMessage({ id: 'old', chat_id: 'a@s.whatsapp.net', ts: 1000, direction: 'in', text: 'meeting old' })
+    indexMessage({ id: 'new', chat_id: 'a@s.whatsapp.net', ts: 5000, direction: 'in', text: 'meeting new' })
+
+    const hits = searchMessages({ query: 'meeting' })
+    assert.equal(hits.length, 2)
+    assert.equal(hits[0].id, 'new')
+    assert.equal(hits[1].id, 'old')
+  } finally { teardown(db) }
+})
+
+// ---------------------------------------------------------------------------
+// getMessages
+// ---------------------------------------------------------------------------
+
+test('getMessages — returns chat messages ordered DESC, capped by limit', async () => {
+  const db = await setupTempDb()
+  try {
+    for (let i = 0; i < 5; i++) {
+      indexMessage({ id: `m${i}`, chat_id: 'a@s.whatsapp.net', ts: 1000 + i, direction: 'in', text: `msg ${i}` })
+    }
+    const rows = getMessages({ chat_id: 'a@s.whatsapp.net', limit: 3 })
+    assert.equal(rows.length, 3)
+    assert.equal(rows[0].id, 'm4') // most recent first
+    assert.equal(rows[1].id, 'm3')
+    assert.equal(rows[2].id, 'm2')
+  } finally { teardown(db) }
+})
+
+test('getMessages — before_ts filter excludes newer messages', async () => {
+  const db = await setupTempDb()
+  try {
+    indexMessage({ id: 'm1', chat_id: 'a@s.whatsapp.net', ts: 1000, direction: 'in', text: 'old' })
+    indexMessage({ id: 'm2', chat_id: 'a@s.whatsapp.net', ts: 5000, direction: 'in', text: 'new' })
+
+    const rows = getMessages({ chat_id: 'a@s.whatsapp.net', before_ts: 3000 })
+    assert.equal(rows.length, 1)
+    assert.equal(rows[0].id, 'm1')
+  } finally { teardown(db) }
+})
+
+test('getMessages — after_ts filter excludes older messages', async () => {
+  const db = await setupTempDb()
+  try {
+    indexMessage({ id: 'm1', chat_id: 'a@s.whatsapp.net', ts: 1000, direction: 'in', text: 'old' })
+    indexMessage({ id: 'm2', chat_id: 'a@s.whatsapp.net', ts: 5000, direction: 'in', text: 'new' })
+
+    const rows = getMessages({ chat_id: 'a@s.whatsapp.net', after_ts: 3000 })
+    assert.equal(rows.length, 1)
+    assert.equal(rows[0].id, 'm2')
+  } finally { teardown(db) }
+})
+
+test('getMessages — empty chat returns empty array', async () => {
+  const db = await setupTempDb()
+  try {
+    indexMessage({ id: 'm1', chat_id: 'other@s.whatsapp.net', ts: 1000, direction: 'in', text: 'hi' })
+    const rows = getMessages({ chat_id: 'nonexistent@s.whatsapp.net' })
+    assert.equal(rows.length, 0)
+  } finally { teardown(db) }
+})
+
+// ---------------------------------------------------------------------------
+// formatExport (pure formatter — no DB needed but uses MessageRow shape)
+// ---------------------------------------------------------------------------
+
+test('formatExport — markdown emits sender header + body', async () => {
+  const db = await setupTempDb()
+  try {
+    indexMessage({ id: 'm1', chat_id: 'a@s.whatsapp.net', sender_id: 'juan@s.whatsapp.net', push_name: 'Juan', ts: 1000, direction: 'in', text: 'hello' })
+    indexMessage({ id: 'm2', chat_id: 'a@s.whatsapp.net', ts: 1100, direction: 'out', text: 'hi back' })
+
+    const rows = getMessages({ chat_id: 'a@s.whatsapp.net' })
+    const md = formatExport(rows, 'markdown')
+    assert.match(md, /\*\*Juan\*\*/)
+    assert.match(md, /hello/)
+    assert.match(md, /\*\*Claude\*\*/)
+    assert.match(md, /hi back/)
+  } finally { teardown(db) }
+})
+
+test('formatExport — jsonl emits one JSON object per line', async () => {
+  const db = await setupTempDb()
+  try {
+    indexMessage({ id: 'm1', chat_id: 'a@s.whatsapp.net', sender_id: 'juan@s.whatsapp.net', push_name: 'Juan', ts: 1000, direction: 'in', text: 'a' })
+    indexMessage({ id: 'm2', chat_id: 'a@s.whatsapp.net', ts: 1100, direction: 'out', text: 'b' })
+
+    const rows = getMessages({ chat_id: 'a@s.whatsapp.net' })
+    const jsonl = formatExport(rows, 'jsonl')
+    const lines = jsonl.trim().split('\n')
+    assert.equal(lines.length, 2)
+    const first = JSON.parse(lines[0])
+    assert.equal(first.id, 'm1') // chronological order in export
+    assert.equal(first.text, 'a')
+  } finally { teardown(db) }
+})
+
+test('formatExport — csv has header row + escapes quotes/commas', async () => {
+  const db = await setupTempDb()
+  try {
+    indexMessage({ id: 'm1', chat_id: 'a@s.whatsapp.net', sender_id: 'juan@s.whatsapp.net', push_name: 'Juan, "el grande"', ts: 1000, direction: 'in', text: 'hi, "comma" here' })
+
+    const rows = getMessages({ chat_id: 'a@s.whatsapp.net' })
+    const csv = formatExport(rows, 'csv')
+    const lines = csv.trim().split('\n')
+    assert.match(lines[0], /^ts_iso,direction,sender_id,push_name,chat_id,id,text$/)
+    // commas + quotes inside fields must be escaped
+    assert.match(lines[1], /"Juan, ""el grande"""/)
+    assert.match(lines[1], /"hi, ""comma"" here"/)
+  } finally { teardown(db) }
+})
+
+test('formatExport — empty rows returns empty string for jsonl/csv', async () => {
+  const md = formatExport([], 'markdown')
+  const jsonl = formatExport([], 'jsonl')
+  const csv = formatExport([], 'csv')
+  assert.equal(md, '')
+  assert.equal(jsonl, '')
+  // CSV still has header row
+  assert.match(csv, /^ts_iso,direction/)
+})
+
+test('formatExport — sorts by ts ASC even if input is DESC', async () => {
+  const db = await setupTempDb()
+  try {
+    indexMessage({ id: 'newer', chat_id: 'a@s.whatsapp.net', ts: 5000, direction: 'in', text: 'newer' })
+    indexMessage({ id: 'older', chat_id: 'a@s.whatsapp.net', ts: 1000, direction: 'in', text: 'older' })
+    // getMessages returns DESC; formatExport should re-sort to ASC for chronological export
+    const rows = getMessages({ chat_id: 'a@s.whatsapp.net' })
+    assert.equal(rows[0].id, 'newer') // confirm DESC input
+
+    const jsonl = formatExport(rows, 'jsonl')
+    const lines = jsonl.trim().split('\n')
+    assert.equal(JSON.parse(lines[0]).id, 'older')
+    assert.equal(JSON.parse(lines[1]).id, 'newer')
   } finally { teardown(db) }
 })
