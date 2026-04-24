@@ -731,11 +731,20 @@ function assertReadable(chatId: string): void {
 }
 
 function currentScopedAllowedChats(access: AccessState): string[] | null {
-  return scopedAllowedChats(
+  const result = scopedAllowedChats(
     getInboundContext(),
     scopeView(access),
     { ownerBypass: ownerBypassEnabled() },
   )
+  // Empty array = the scope resolved to 'denied' (owner set, no inbound
+  // context). Throw the same error assertReadable would, rather than letting
+  // enumeration tools silently return "No matches" — which is misleading UX.
+  if (result !== null && result.length === 0) {
+    throw new Error(
+      `history scope: no inbound context and owner is set. Start from a WhatsApp message or set WHATSAPP_OWNER_BYPASS=1`,
+    )
+  }
+  return result
 }
 
 // ---------------------------------------------------------------------------

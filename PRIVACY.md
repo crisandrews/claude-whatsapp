@@ -84,6 +84,8 @@ When a WhatsApp group is allowed via `/whatsapp:access add-group`, the plugin in
 
 The plugin does not transmit group participant data anywhere — it stays in the local database. Users adding the bot to groups are responsible for complying with WhatsApp's terms and any local laws around recording or processing other participants' messages, including obtaining required consent.
 
+Cross-chat boundaries are enforced server-side: the nine read/exfil tools (`search_messages`, `fetch_history`, `export_chat`, `list_group_senders`, `get_message_context`, `get_chat_analytics`, `list_chats`, `search_contact`, `forward_message`) are gated so that a user in one chat cannot have the agent surface indexed history from another chat. The owner (`ownerJids`) is the single exception with cross-chat access. Non-owner chats are sandboxed to their own history by default; configurable via per-chat `historyScope`. Full model: [docs/access.md#history-scope](docs/access.md#history-scope).
+
 ## 7. User-provided content and responsibility
 
 The user decides what to put into the access list, what groups to allow, and how to configure transcription and indexing. The plugin does not classify, redact, or filter content.

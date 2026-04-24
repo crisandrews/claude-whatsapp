@@ -4,6 +4,7 @@ How the local message store works, how to search it, how to pull older messages 
 
 - [What gets indexed](#what-gets-indexed)
 - [Where the store lives](#where-the-store-lives)
+- [Per-chat history scope](#per-chat-history-scope)
 - [Searching: FTS5 query matrix](#fts5-query-matrix)
 - [`fetch_history` flow](#fetch_history-flow)
 - [Exporting a chat](#exporting-a-chat)
@@ -64,6 +65,20 @@ CREATE VIRTUAL TABLE messages_fts USING fts5(
 The `porter unicode61` tokenizer means matches are case-insensitive, Unicode-aware, and stemmed — `running` matches `runs` and `ran` in English. Good for natural-language search, slightly surprising for exact-term hunting (use a phrase query if you need exact: `"pizza"`).
 
 Access through the SDK side is idiomatic better-sqlite3 (`db.ts:97-116`). Third-party companions should go through the MCP tools rather than opening `messages.db` directly — the WAL journal can be in flight.
+
+---
+
+## Per-chat history scope
+
+All tools that read or exfiltrate indexed history are gated by chat: `search_messages`, `fetch_history`, `export_chat`, `list_group_senders`, `get_message_context`, `get_chat_analytics`, `list_chats`, `search_contact`, and `forward_message` (source side). The rule in one sentence: **owners (`ownerJids` in `access.json`) read every indexed chat; every other chat is sandboxed to its own history by default.**
+
+Practical consequences for this doc's workflows:
+
+- A non-owner chat asking "search all of Maria's chats" gets `history scope: chat_id <jid> not accessible from this session` for any chat other than its own.
+- From a non-owner chat, `search_messages` without a `chat_id` is automatically filtered to that chat's scope (+ any explicit overrides configured via `set-scope`).
+- Running `search_messages` from the terminal after an owner is configured requires either a recent WhatsApp inbound (to establish context) or `WHATSAPP_OWNER_BYPASS=1` in the environment — the server fails closed to prevent a delayed WhatsApp turn from inheriting terminal privileges.
+
+Override per-chat with `/whatsapp:access set-scope <chat> <own|all|csv>`. Full model: [docs/access.md#history-scope](access.md#history-scope).
 
 ---
 

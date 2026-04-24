@@ -246,6 +246,29 @@ rm <channel-dir>/messages.db*
 
 You lose indexed history only — no auth, no config, no access control impact. The DB is recreated empty on next launch.
 
+### `history scope: chat_id <jid> not accessible from this session`
+
+**What it means.** A read tool (`search_messages`, `fetch_history`, `export_chat`, `list_group_senders`, `get_message_context`, `get_chat_analytics`, `list_chats`, `search_contact`, or `forward_message`) was called for a chat outside the current session's history scope. Non-owner chats are sandboxed to their own history by default.
+
+**Fix.** Check the scope with `/whatsapp:access show-scope <chat>`. If the caller should have broader access:
+
+- `/whatsapp:access set-scope <caller-chat> all` — grant cross-chat read.
+- `/whatsapp:access set-scope <caller-chat> <jid1>,<jid2>` — grant access to specific chats.
+- Or respond from the owner's DM — owners (`ownerJids`) bypass scope.
+
+See [docs/access.md#history-scope](access.md#history-scope).
+
+### `history scope: no inbound context and owner is set`
+
+**What it means.** You invoked a scope-gated tool from the terminal (or after the 60-second inbound-context TTL expired). With an owner configured, the server can't tell if the call is from the trusted operator or from a delayed WhatsApp turn, so it fails closed.
+
+**Fix.** Two options:
+
+- Send yourself a WhatsApp message first — the inbound context grants owner access (if you are the owner).
+- Export `WHATSAPP_OWNER_BYPASS=1` in the environment and relaunch Claude Code. The server treats the terminal as operator-trusted and skips the scope check regardless of context.
+
+See [docs/access.md#bootstrap-and-the-terminal](access.md#bootstrap-and-the-terminal).
+
 ---
 
 ## Where to look

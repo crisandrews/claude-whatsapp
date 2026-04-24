@@ -52,6 +52,21 @@ All tools surface to the model as `mcp__whatsapp__<tool>`. Each one takes a `cha
 
 ---
 
+## Per-chat history scope (applies to 9 tools)
+
+Nine tools read or exfiltrate history indexed in `messages.db` and are gated per-chat on the server side:
+
+- `search_messages`, `fetch_history`, `export_chat`, `list_group_senders`
+- `get_message_context`, `get_chat_analytics`
+- `list_chats`, `search_contact`
+- `forward_message` (gate applies to the *source* chat — destination is still `assertAllowedChat`)
+
+Summary of the rule: **the owner (`ownerJids`) reads every indexed chat; every other chat is sandboxed to its own history by default.** Overrides live in `groups[jid].historyScope` / `dms[jid].historyScope` — set them with `/whatsapp:access set-scope`. A terminal invocation without a recent WhatsApp inbound fails closed when an owner is set; `WHATSAPP_OWNER_BYPASS=1` in the environment restores operator access.
+
+When a gated call fails, the tool returns `history scope: chat_id <jid> not accessible from this session` or `history scope: no inbound context and owner is set`. Full model, bootstrap flow, and terminal semantics in [docs/access.md#history-scope](access.md#history-scope).
+
+---
+
 ## Talking to Claude through WhatsApp
 
 Claude picks tools automatically based on what you ask. Some example prompts from your phone, and the tool Claude will typically reach for:

@@ -10,6 +10,7 @@ Reference for every `/whatsapp:configure` sub-command and every key in the plugi
 - [Reset](#reset)
 - [Status](#status)
 - [The config file](#the-config-file)
+- [Environment variables](#environment-variables)
 - [Worked examples](#worked-examples)
 
 ---
@@ -265,6 +266,17 @@ Field reference (all top-level, no nesting):
 The file is created with `0600` permissions. The skill writes it atomically (tmp + rename) so a partially-written file is never observed.
 
 For state file paths, schemas, and the broader public contract that companion plugins can depend on, see [docs/state-contract.md](state-contract.md).
+
+---
+
+## Environment variables
+
+| Variable | Purpose |
+|---|---|
+| `GROQ_API_KEY` / `OPENAI_API_KEY` | Required by `audioProvider: "groq"` / `"openai"` (see [Voice transcription](#voice-transcription)). |
+| `WHATSAPP_OWNER_BYPASS` | Set to `1` or `true` to treat the terminal session as the trusted operator for history scope. Bypasses the "no inbound context" fail-closed when an owner is configured. Only honored server-side — has no effect on WhatsApp-originated tool calls. See [docs/access.md#bootstrap-and-the-terminal](access.md#bootstrap-and-the-terminal). |
+
+History-scope configuration itself lives in `access.json` — see [docs/access.md#history-scope](access.md#history-scope) for the owner / per-chat scope model and the `/whatsapp:access show-owner`, `set-owner`, `show-scope`, `set-scope` subcommands.
 
 ---
 

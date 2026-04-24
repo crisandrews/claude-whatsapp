@@ -148,8 +148,12 @@ In-depth guides, each with worked examples end-to-end. The README is the at-a-gl
 | `/whatsapp:access allow <jid>` | Add a user directly |
 | `/whatsapp:access revoke <jid>` | Remove a user |
 | `/whatsapp:access policy <mode>` | Set DM policy: `pairing`, `allowlist`, or `disabled` |
+| `/whatsapp:access show-owner` / `set-owner <jid>` | Show or designate the cross-chat owner JID |
+| `/whatsapp:access show-scope <chat>` / `set-scope <chat> <own\|all\|csv>` | Show or configure per-chat history scope |
 
 Default policy is `pairing`. IDs are WhatsApp JIDs — format depends on your Baileys version (e.g. `56912345678@s.whatsapp.net` or `12345678901234@lid`). Check `/whatsapp:access` to see the exact IDs.
+
+**Per-chat history scope.** Nine read/exfil tools (`search_messages`, `fetch_history`, `export_chat`, `list_group_senders`, `get_message_context`, `get_chat_analytics`, `list_chats`, `search_contact`, `forward_message`) are gated by chat. Owners (`ownerJids`) read every indexed chat; non-owner chats are sandboxed to their own history by default. Override per-chat with `set-scope`. First `pair` after a fresh install seeds `ownerJids` automatically. Terminal operator can set `WHATSAPP_OWNER_BYPASS=1` in the environment for full access without an inbound. Full model: [docs/access.md#history-scope](docs/access.md#history-scope).
 
 ### [Groups](#access-groups)
 

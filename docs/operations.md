@@ -113,13 +113,15 @@ The update path is designed to be non-destructive:
 **What survives an update** (preserved across all updates):
 
 - `auth/` — your WhatsApp session. No QR re-scan needed.
-- `access.json` — allowlists and group configs.
+- `access.json` — allowlists, group configs, owner JIDs, per-chat history scope.
 - `config.json` — all your settings (audio, chunking, etc.).
 - `messages.db` — the indexed message history.
 - `inbox/` — downloaded media and exports.
 - `logs/` — conversation and system logs.
 
 **What doesn't survive**: nothing, under normal updates. If the update path ever needs a breaking migration, that'll ship behind a major version bump with explicit notes in `CHANGELOG.md`.
+
+> **Upgrading an existing install past the chat-scope governance release.** Non-owner chats are now sandboxed to their own history by default. Existing `access.json` files without `ownerJids` enter bootstrap mode (no enforcement) until the next `/whatsapp:access pair <code>`, which seeds `ownerJids` with both JID formats of the paired contact. If you use broad read tools (`search_messages`, `export_chat`, etc.) from the terminal, add `export WHATSAPP_OWNER_BYPASS=1` to the shell where you run Claude Code. See [docs/access.md#history-scope](access.md#history-scope).
 
 > **Don't restart Claude Code while `status: "deps_missing"` is active.** That aborts the in-progress install and puts you back at step 1. Just wait.
 

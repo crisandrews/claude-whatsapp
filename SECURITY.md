@@ -18,8 +18,9 @@ The code in this repository:
 - `server.ts`, `lib.ts`, `db.ts`, `bootstrap.mjs`
 - The `skills/` directory
 - The published `<channel-dir>/*` state contract (`access.json`, `config.json`, `recent-groups.json`, `status.json`, etc.) — bugs that let an attacker bypass access control, read auth credentials from outside the plugin, or exfiltrate state via the channel surface.
-- The MCP tool surface (`reply`, `react`, `edit_message`, `delete_message`, `send_poll`, `download_attachment`, `search_messages`, `fetch_history`, `list_group_senders`, `export_chat`) — bugs that let untrusted channel input trigger unintended tool calls, file access outside the inbox directory, or other privilege escalation.
+- The MCP tool surface (`reply`, `react`, `edit_message`, `delete_message`, `send_poll`, `download_attachment`, `search_messages`, `fetch_history`, `list_group_senders`, `export_chat`, `get_message_context`, `get_chat_analytics`, `list_chats`, `search_contact`, `forward_message`) — bugs that let untrusted channel input trigger unintended tool calls, file access outside the inbox directory, or other privilege escalation.
 - The permission relay protocol implementation — bugs that let an attacker approve or deny a tool decision without authorization.
+- The per-chat history-scope gate (`resolveScope` / `assertReadableScope` / `scopedAllowedChats` in `scope.ts`, `setInboundContext` in `server.ts`) — bugs that let a non-owner chat read messages, metadata, or cached proto from another chat via any of the nine gated read/exfil tools. The fail-closed semantics when an owner is configured and no inbound context exists are load-bearing; regressions there are in scope.
 
 ## What's out of scope
 
