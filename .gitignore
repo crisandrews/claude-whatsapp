@@ -12,3 +12,6 @@ node_modules/
 
 # Dev-local Claude Code project conventions — not part of the public plugin
 CLAUDE.md
+
+# Dev-local test files — kept locally for verification, not shipped in the public plugin
+*.test.ts

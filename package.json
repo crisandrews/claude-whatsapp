@@ -5,8 +5,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "node bootstrap.mjs",
-    "test": "npx -y tsx --test lib.test.ts db.test.ts scope.test.ts"
+    "start": "node bootstrap.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
