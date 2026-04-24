@@ -393,6 +393,57 @@ test('searchMessages — orders by ts DESC (most recent first)', async () => {
   } finally { teardown(db) }
 })
 
+test('searchMessages — chat_ids filter scopes to multiple chats', async () => {
+  const db = await setupTempDb()
+  try {
+    indexMessage({ id: 'm1', chat_id: 'a@s.whatsapp.net', ts: 1000, direction: 'in', text: 'meeting' })
+    indexMessage({ id: 'm2', chat_id: 'b@s.whatsapp.net', ts: 1100, direction: 'in', text: 'meeting' })
+    indexMessage({ id: 'm3', chat_id: 'c@s.whatsapp.net', ts: 1200, direction: 'in', text: 'meeting' })
+
+    const hits = searchMessages({ query: 'meeting', chat_ids: ['a@s.whatsapp.net', 'b@s.whatsapp.net'] })
+    const ids = hits.map(h => h.chat_id).sort()
+    assert.deepEqual(ids, ['a@s.whatsapp.net', 'b@s.whatsapp.net'])
+  } finally { teardown(db) }
+})
+
+test('searchMessages — empty chat_ids returns [] without querying', async () => {
+  const db = await setupTempDb()
+  try {
+    indexMessage({ id: 'm1', chat_id: 'a@s.whatsapp.net', ts: 1000, direction: 'in', text: 'meeting' })
+    const hits = searchMessages({ query: 'meeting', chat_ids: [] })
+    assert.deepEqual(hits, [])
+  } finally { teardown(db) }
+})
+
+test('getMessageContext — allowedChatIds constrains the anchor lookup', async () => {
+  const db = await setupTempDb()
+  try {
+    // Same message id in two different chats (legal — UNIQUE is per chat_id).
+    indexMessage({ id: 'shared', chat_id: 'a@s.whatsapp.net', ts: 1000, direction: 'in', text: 'in A' })
+    indexMessage({ id: 'shared', chat_id: 'b@s.whatsapp.net', ts: 2000, direction: 'in', text: 'in B' })
+
+    const { getMessageContext } = await import('./db.js')
+    const ctx = getMessageContext('shared', 0, 0, ['b@s.whatsapp.net'])
+    assert.ok(ctx.anchor)
+    assert.equal(ctx.anchor!.chat_id, 'b@s.whatsapp.net')
+    assert.equal(ctx.anchor!.text, 'in B')
+  } finally { teardown(db) }
+})
+
+test('getRawMessage — allowedChatIds constrains by chat', async () => {
+  const db = await setupTempDb()
+  try {
+    indexMessage({ id: 'shared', chat_id: 'a@s.whatsapp.net', ts: 1000, direction: 'in', text: 'in A', raw_message: { key: { id: 'shared' } } })
+    indexMessage({ id: 'shared', chat_id: 'b@s.whatsapp.net', ts: 2000, direction: 'in', text: 'in B', raw_message: { key: { id: 'shared' } } })
+
+    const { getRawMessage } = await import('./db.js')
+    const out = getRawMessage('shared', ['b@s.whatsapp.net'])
+    assert.ok(out)
+    const blocked = getRawMessage('shared', [])
+    assert.equal(blocked, null)
+  } finally { teardown(db) }
+})
+
 // ---------------------------------------------------------------------------
 // getMessages
 // ---------------------------------------------------------------------------

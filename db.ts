@@ -46,6 +46,10 @@ export interface MessageRow {
 export interface SearchOptions {
   query: string
   chat_id?: string
+  // Restrict search to a whitelist of chat_ids. Mutually exclusive with
+  // chat_id. Empty array short-circuits to [] without running SQL — used when
+  // the caller's history scope resolved to an empty set (denied).
+  chat_ids?: string[]
   limit?: number
 }
 
@@ -199,13 +203,31 @@ export function indexMessage(msg: IndexedMessage): void {
 // Returns the cached WAMessage proto for a message id, parsed back from JSON,
 // or null if the row predates raw_message caching (or doesn't exist). Callers
 // should treat null as "cannot forward this message".
-export function getRawMessage(message_id: string): any | null {
+//
+// When `allowedChatIds` is provided, the lookup is constrained to those chats —
+// message IDs are unique only per (chat_id, id), so a naked id lookup could
+// otherwise return a row from a chat the caller is not allowed to read.
+export function getRawMessage(
+  message_id: string,
+  allowedChatIds?: string[],
+): any | null {
   if (!dbInstance) return null
   if (!message_id) return null
+  if (allowedChatIds && allowedChatIds.length === 0) return null
   try {
-    const row = dbInstance.prepare(
-      `SELECT raw_message FROM messages WHERE id = ? LIMIT 1`,
-    ).get(message_id) as any
+    let row: any
+    if (allowedChatIds && allowedChatIds.length > 0) {
+      const placeholders = allowedChatIds.map(() => '?').join(',')
+      row = dbInstance
+        .prepare(
+          `SELECT raw_message FROM messages WHERE id = ? AND chat_id IN (${placeholders}) LIMIT 1`,
+        )
+        .get(message_id, ...allowedChatIds)
+    } else {
+      row = dbInstance
+        .prepare(`SELECT raw_message FROM messages WHERE id = ? LIMIT 1`)
+        .get(message_id)
+    }
     if (!row || !row.raw_message) return null
     return JSON.parse(row.raw_message)
   } catch {
@@ -243,22 +265,53 @@ function clampLimit(n: number | undefined): number {
 
 export function searchMessages(opts: SearchOptions): MessageRow[] {
   if (!dbInstance) return []
+  // Empty whitelist → no chats accessible → return immediately.
+  if (opts.chat_ids && opts.chat_ids.length === 0) return []
   const limit = clampLimit(opts.limit)
-  const sql = opts.chat_id
-    ? `SELECT m.*, snippet(messages_fts, 0, '«', '»', '…', 12) AS snippet
+
+  if (opts.chat_id) {
+    const sql = `SELECT m.*, snippet(messages_fts, 0, '«', '»', '…', 12) AS snippet
        FROM messages m
        JOIN messages_fts ON messages_fts.rowid = m.rowid
        WHERE messages_fts MATCH @query AND m.chat_id = @chat_id
        ORDER BY m.ts DESC LIMIT @limit`
-    : `SELECT m.*, snippet(messages_fts, 0, '«', '»', '…', 12) AS snippet
+    try {
+      const rows = dbInstance.prepare(sql).all({
+        query: opts.query,
+        chat_id: opts.chat_id,
+        limit,
+      })
+      return rows.map(rowToMessage)
+    } catch {
+      return []
+    }
+  }
+
+  if (opts.chat_ids && opts.chat_ids.length > 0) {
+    const placeholders = opts.chat_ids.map(() => '?').join(',')
+    const sql = `SELECT m.*, snippet(messages_fts, 0, '«', '»', '…', 12) AS snippet
        FROM messages m
        JOIN messages_fts ON messages_fts.rowid = m.rowid
-       WHERE messages_fts MATCH @query
-       ORDER BY m.ts DESC LIMIT @limit`
+       WHERE messages_fts MATCH ? AND m.chat_id IN (${placeholders})
+       ORDER BY m.ts DESC LIMIT ?`
+    try {
+      const rows = dbInstance
+        .prepare(sql)
+        .all(opts.query, ...opts.chat_ids, limit)
+      return rows.map(rowToMessage)
+    } catch {
+      return []
+    }
+  }
+
+  const sql = `SELECT m.*, snippet(messages_fts, 0, '«', '»', '…', 12) AS snippet
+     FROM messages m
+     JOIN messages_fts ON messages_fts.rowid = m.rowid
+     WHERE messages_fts MATCH @query
+     ORDER BY m.ts DESC LIMIT @limit`
   try {
     const rows = dbInstance.prepare(sql).all({
       query: opts.query,
-      chat_id: opts.chat_id,
       limit,
     })
     return rows.map(rowToMessage)
@@ -383,14 +436,31 @@ export function getMessageContext(
   message_id: string,
   before?: number,
   after?: number,
+  allowedChatIds?: string[],
 ): MessageContext {
   if (!dbInstance) return { anchor: null, before: [], after: [] }
+  if (allowedChatIds && allowedChatIds.length === 0) {
+    return { anchor: null, before: [], after: [] }
+  }
   const beforeN = clampWindow(before, 5, 50)
   const afterN = clampWindow(after, 5, 50)
   try {
-    const anchorRow = dbInstance
-      .prepare(`SELECT * FROM messages WHERE id = ? LIMIT 1`)
-      .get(message_id) as any
+    // message_id is only unique per (chat_id, id). Constrain the anchor
+    // lookup to the caller's readable chat set so we never surface a
+    // collision from a chat outside the current scope.
+    let anchorRow: any
+    if (allowedChatIds && allowedChatIds.length > 0) {
+      const placeholders = allowedChatIds.map(() => '?').join(',')
+      anchorRow = dbInstance
+        .prepare(
+          `SELECT * FROM messages WHERE id = ? AND chat_id IN (${placeholders}) LIMIT 1`,
+        )
+        .get(message_id, ...allowedChatIds) as any
+    } else {
+      anchorRow = dbInstance
+        .prepare(`SELECT * FROM messages WHERE id = ? LIMIT 1`)
+        .get(message_id) as any
+    }
     if (!anchorRow) return { anchor: null, before: [], after: [] }
     const anchor = rowToMessage(anchorRow)
 

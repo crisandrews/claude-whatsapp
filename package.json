@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "start": "node bootstrap.mjs",
-    "test": "npx -y tsx --test lib.test.ts db.test.ts"
+    "test": "npx -y tsx --test lib.test.ts db.test.ts scope.test.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",

@@ -46,7 +46,9 @@ All access state lives in `$STATE_DIR/access.json`. Default when missing:
 {
   "dmPolicy": "pairing",
   "allowFrom": [],
+  "ownerJids": [],
   "groups": {},
+  "dms": {},
   "pending": {}
 }
 ```
@@ -55,7 +57,9 @@ All access state lives in `$STATE_DIR/access.json`. Default when missing:
 |-------|------|-------------|
 | `dmPolicy` | `"pairing"` \| `"allowlist"` \| `"disabled"` | How to handle DMs from unknown senders |
 | `allowFrom` | `string[]` | Allowed sender JIDs (e.g. `"56912345678@s.whatsapp.net"` or `"12345678901234@lid"`) |
-| `groups` | `Record<string, {requireMention, allowFrom}>` | Group configurations |
+| `ownerJids` | `string[]` | Cross-chat owner JIDs. Bootstrapped by first `pair` (adds both senderId and chatId since Baileys v7 splits the same human across `@lid` and `@s.whatsapp.net`). The owner can read any indexed chat. |
+| `groups` | `Record<string, {requireMention, allowFrom, historyScope?}>` | Group configurations. `historyScope` (optional, default `"own"`) controls which chats this group can read: `"own"` (sandboxed to itself), `"all"` (read every indexed chat), or a string array of extra chat JIDs. |
+| `dms` | `Record<string, {historyScope?}>` | Per-DM history scope overrides (same semantics as groups). DMs without an entry default to `"own"`. |
 | `pending` | `Record<string, PendingEntry>` | Pending pairing codes |
 
 ---
@@ -86,6 +90,7 @@ End with a concrete next step based on state:
 2. Look up `<code>` in `pending`
 3. **If found and not expired:**
    - Add BOTH `pending[code].senderId` AND `pending[code].chatId` to `allowFrom` (skip duplicates). Baileys v7 can identify the same user with two different JID formats (`@lid` and `@s.whatsapp.net`), so both must be in the allowlist.
+   - **If `ownerJids` is empty (or missing),** add BOTH `pending[code].senderId` AND `pending[code].chatId` to `ownerJids`. The very first pairing also bootstraps the cross-chat owner. Announce this explicitly: tell the user they've been designated as the owner and what that means (they can read any chat; other chats are sandboxed to themselves by default).
    - Remove this entry from `pending`
    - Also remove any OTHER pending entries that share the same `senderId` or `chatId` — they are the same user with a different JID format.
    - Save `access.json`
@@ -174,6 +179,48 @@ Then apply:
 2. Delete the group entry
 3. Save `access.json`
 4. Confirm
+
+### `show-owner` — print the cross-chat owner JIDs
+
+1. Read `access.json`.
+2. If `ownerJids` is missing or empty, print `(no owner set — all chats are sandboxed to their own history; run /whatsapp:access pair <code> to bootstrap or /whatsapp:access set-owner <jid>)`.
+3. Otherwise print the JIDs one per line. If there is more than one, explain that the same human can appear under multiple JID formats (`@lid` and `@s.whatsapp.net`) and all of them point to the same owner.
+
+### `set-owner <jid>` — designate a JID as cross-chat owner
+
+1. Read `access.json`.
+2. Verify `<jid>` exists in `allowFrom` OR in some `groups[*].allowFrom`. If not, refuse with: *"JID `<jid>` is not in any allowlist. Add it via `/whatsapp:access allow <jid>` or `group-allow` first."* Do NOT silently add it — the operator should be explicit about which JIDs they trust.
+3. Append `<jid>` to `ownerJids` (skip if already present).
+4. Save `access.json`.
+5. Confirm. If the user knows the owner also appears under the other JID format (`@lid` vs `@s.whatsapp.net`), suggest running `set-owner` again with that JID so the server recognizes both.
+
+### `set-scope <chat_jid> <scope>` — configure which chats a chat can read
+
+`<scope>` is one of:
+- `own` — default; sandboxed to its own history.
+- `all` — can read every allowlisted chat.
+- `jid1,jid2,…` — CSV of chat JIDs; the chat can read its own history plus each listed chat.
+
+1. Read `access.json`.
+2. If `<scope>` is a CSV list, split on comma and validate EACH JID. Every entry must exist in `allowFrom` OR as a key in `groups`. If any entry is unknown, refuse with the full list of bad entries: *"These JIDs are not in any allowlist: `<bad1>`, `<bad2>`. Add them first or remove from the CSV."* Prevents typos from silently creating phantom scope state.
+3. Route by suffix:
+   - If `<chat_jid>` ends with `@g.us`:
+     - If `groups[<chat_jid>]` does not exist, refuse with: *"Group `<chat_jid>` is not configured. Run `/whatsapp:access add-group <chat_jid>` first so the server knows about it."* Do NOT auto-create — mention/allowFrom settings are a deliberate configuration step.
+     - Set `groups[<chat_jid>].historyScope` to the parsed value (`"own"` / `"all"` / `string[]`).
+   - Otherwise (DM):
+     - If `dms[<chat_jid>]` does not exist, create it as `{}`.
+     - Set `dms[<chat_jid>].historyScope` to the parsed value.
+4. Save `access.json`.
+5. Confirm. Mention that owners always read everything, so this setting only matters for non-owner callers.
+
+### `show-scope <chat_jid>` — print a chat's effective history scope
+
+1. Read `access.json`.
+2. Route by suffix:
+   - If `<chat_jid>` ends with `@g.us`, read `groups[<chat_jid>].historyScope`.
+   - Otherwise read `dms[<chat_jid>].historyScope`.
+3. If undefined, print `"own" (default)`. Otherwise print the explicit value — for CSV arrays, list each JID.
+4. Also print whether `<chat_jid>` itself is configured as an owner (`ownerJids.includes(<chat_jid>)`) — owners bypass scope entirely.
 
 ### `list` — same as no args
 

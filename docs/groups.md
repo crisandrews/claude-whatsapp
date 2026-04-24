@@ -24,7 +24,10 @@ Everything you need to add the bot to a WhatsApp group, decide who in the group 
 | `/whatsapp:access group-allow <group-jid> <member-jid>` | Restrict the group to specific members. |
 | `/whatsapp:access group-revoke <group-jid> <member-jid>` | Remove a member from the group's whitelist. |
 | `/whatsapp:access remove-group <jid>` | Stop accepting messages from the group entirely. |
+| `/whatsapp:access set-scope <group-jid> <own\|all\|csv>` | Configure which chats this group can read. Default `own`. |
 | `/whatsapp:access` | List configured groups + recently dropped (unknown) groups. |
+
+Groups inherit `historyScope: "own"` by default — the group can only read its own chat history. To let a group read other chats (e.g. a team room that should see the owner's DM with a client), use `set-scope` with `all` or a CSV of chat JIDs. Owners bypass scope entirely. See [docs/access.md](access.md#history-scope) for the full scope model.
 
 ## Group admin from Claude
 

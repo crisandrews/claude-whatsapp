@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+### Added
+
+- Chat-scope governance. New `access.json` fields: `ownerJids: string[]` identifies the cross-chat owner(s); `groups[*].historyScope` and `dms[*].historyScope` configure per-chat read access (`"own"` | `"all"` | `string[]` of extra chat JIDs). New subcommands: `/whatsapp:access show-owner`, `set-owner <jid>`, `show-scope <chat>`, `set-scope <chat> <scope>`. `set-scope` validates every CSV JID against the allowlist so typos can't create phantom state.
+- Nine history-reading and exfil tools now enforce server-side scope: `search_messages`, `fetch_history`, `export_chat`, `list_group_senders`, `get_message_context`, `get_chat_analytics`, `list_chats`, `search_contact`, and `forward_message`. The server tags each inbound with its originating chat and rejects out-of-scope calls with `history scope: chat_id <jid> not accessible from this session`.
+- `getMessageContext` and `getRawMessage` in `db.ts` accept an optional `allowedChatIds` whitelist. Message IDs are only unique per `(chat_id, id)`, so a naked lookup could otherwise surface a row from a chat outside the caller's scope — `forward_message` and `get_message_context` now pass the scope-filtered chat list.
+- `SearchOptions.chat_ids` added to `db.ts` for multi-chat search filtering with short-circuit on empty scope.
+- `scope.ts` module with pure `resolveScope` / `scopedAllowedChats` / `assertReadableScope` helpers + `scope.test.ts` unit coverage (owner, non-owner defaults, per-chat overrides, terminal bootstrap, TTL fail-closed).
+
+### Changed
+
+- **Default behavior**: non-owner chats are now sandboxed to their own history. Before this release, any allowlisted chat could read any other allowlisted chat's history. The first `/whatsapp:access pair <code>` after upgrading seeds `ownerJids` with both JID formats (`@lid` and `@s.whatsapp.net`), granting the paired user cross-chat access automatically. Until then the channel is in bootstrap mode (no scope enforced), so upgrading an existing install doesn't silently break the operator's own access.
+- Terminal invocations of read tools while an owner is configured and no recent WhatsApp inbound exists now return a `history scope` error (fail-closed). Set `WHATSAPP_OWNER_BYPASS=1` in the environment to restore unrestricted terminal access.
+
+### Security
+
+- Fixed a potential exfiltration path in `forward_message`: the tool previously forwarded any cached message by ID regardless of which chat it came from. It now refuses to forward messages whose source chat is outside the caller's history scope.
+
 ## [1.17.2] — 2026-04-24
 
 ### Fixed

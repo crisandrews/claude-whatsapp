@@ -5,6 +5,7 @@ Everything you need to let someone DM the bot, lock access down when you're done
 - [Quick reference](#quick-reference)
 - [The three DM policies](#the-three-dm-policies)
 - [Pairing flow (the default)](#pairing-flow-the-default)
+- [History scope](#history-scope)
 - [Worked examples](#worked-examples)
 - [Allowing and revoking by JID](#allowing-and-revoking-by-jid)
 - [Finding a JID](#finding-a-jid)
@@ -19,22 +20,29 @@ Everything you need to let someone DM the bot, lock access down when you're done
 | Command | Effect |
 |---|---|
 | `/whatsapp:access` | List allowed users, pending pairings, and current policy. |
-| `/whatsapp:access pair <code>` | Approve a pending pairing. Adds the sender to `allowFrom`. |
+| `/whatsapp:access pair <code>` | Approve a pending pairing. Adds the sender to `allowFrom`; first pair also seeds `ownerJids`. |
 | `/whatsapp:access deny <code>` | Reject a pending pairing. |
 | `/whatsapp:access allow <jid>` | Add a user directly (skip the pairing dance). |
 | `/whatsapp:access revoke <jid>` | Remove a user from `allowFrom`. |
 | `/whatsapp:access policy <mode>` | Set DM policy: `pairing`, `allowlist`, or `disabled`. |
+| `/whatsapp:access show-owner` | Print the cross-chat owner JIDs. |
+| `/whatsapp:access set-owner <jid>` | Designate a JID as an owner (must already be allowlisted). |
+| `/whatsapp:access show-scope <chat>` | Print the effective history scope for a chat. |
+| `/whatsapp:access set-scope <chat> <own\|all\|csv>` | Configure which chats a chat can read. |
 
 DM state lives in `<channel-dir>/access.json`:
 
 ```json
 {
   "dmPolicy": "pairing",
-  "allowFrom": ["5491155556666@s.whatsapp.net"],
+  "allowFrom": ["56912345678@s.whatsapp.net"],
+  "ownerJids": ["56912345678@s.whatsapp.net"],
+  "dms": {},
+  "groups": {},
   "pending": {
     "a1b2c3": {
-      "senderId": "5491166667777@s.whatsapp.net",
-      "chatId": "5491166667777@s.whatsapp.net",
+      "senderId": "56987654321@s.whatsapp.net",
+      "chatId": "56987654321@s.whatsapp.net",
       "createdAt": 1713543200000,
       "expiresAt": 1713546800000,
       "replies": 1
@@ -43,7 +51,7 @@ DM state lives in `<channel-dir>/access.json`:
 }
 ```
 
-`allowFrom` is the DM allowlist (same list that `permission-relay.md` broadcasts to). `pending` is the live pairing-code table.
+`allowFrom` is the DM allowlist (same list that `permission-relay.md` broadcasts to). `ownerJids` marks the cross-chat owner — usually the first JID paired. `pending` is the live pairing-code table.
 
 ---
 
@@ -97,6 +105,36 @@ From now on their messages reach Claude and they can receive permission prompts 
 ```
 
 Removes the pending entry. The sender is not notified — subsequent DMs from them will generate a fresh code (if they retry) or be dropped (if you switched to `allowlist`).
+
+---
+
+## History scope
+
+By default, a non-owner chat can only read its own history via tools like `search_messages`, `fetch_history`, `export_chat`, `get_message_context`, `get_chat_analytics`, `search_contact`, `list_chats`, and `forward_message`. The owner (`ownerJids`) has cross-chat access and can search or export any indexed chat.
+
+| Scope | Applies to | Effect |
+|---|---|---|
+| Owner | JIDs in `ownerJids` | Read every indexed chat. |
+| `own` (default) | Every non-owner chat, groups and DMs, unless overridden | Sandboxed to its own history. |
+| `all` | Per-chat override | Read every indexed chat. |
+| `jid1,jid2,…` | Per-chat override | Read own history plus each listed chat. |
+
+Override per-chat via `/whatsapp:access set-scope <chat> <scope>`. For groups the entry lives at `groups[<jid>].historyScope`; for DMs at `dms[<jid>].historyScope`. `set-scope` validates every CSV JID against the allowlist so typos can't silently create phantom access.
+
+### Bootstrap and the terminal
+
+On a fresh install there is no owner yet. While `ownerJids` is empty, every tool call has full access — otherwise you couldn't run `search_messages` from the terminal before pairing the first contact. The first `/whatsapp:access pair <code>` seeds `ownerJids` with both JID formats of that contact (`@lid` and `@s.whatsapp.net`), and from that point on non-owner chats are sandboxed.
+
+After bootstrapping, running tools from the terminal without a recent WhatsApp message returns a *history scope* error — the server can't distinguish a genuine terminal invocation from an expired inbound context, so it fails closed. Two ways to work around this when you need broad access from the terminal:
+
+- Start the turn by sending yourself a WhatsApp message (the inbound context tracks the owner → full access).
+- Set `WHATSAPP_OWNER_BYPASS=1` in the environment before launching Claude Code. The server treats the bypass as "operator-trusted terminal" and returns full access regardless of context.
+
+### Known limitations
+
+- **Concurrent inbounds from different chats** overwrite the context singleton. If Claude is still processing chat A's turn when chat B arrives, a late tool call from A's turn runs under B's scope — fail-closed, so A's call is rejected (never leaks B's data).
+- **Scope `"all"` includes chats created AFTER configuration.** Revisit overrides when you add new sensitive chats.
+- **Memory vs tools.** The scope gate covers tool calls, not Claude's conversational memory. Claude may verbalize something it "remembers" from another chat; the gate stops it from re-fetching to confirm, which is the leakage vector we care about most.
 
 ---
 

@@ -57,22 +57,27 @@ Written atomically with `0600` perms. Readers should tolerate the file being bri
 
 ### `access.json`
 
-Access control state — who can DM, which groups are allowed, which pairings are pending.
+Access control state — who can DM, which groups are allowed, which pairings are pending, plus per-chat history scope and the cross-chat owner.
 
 ```json
 {
   "dmPolicy": "pairing",
-  "allowFrom": ["5491155556666@s.whatsapp.net"],
+  "allowFrom": ["56912345678@s.whatsapp.net"],
+  "ownerJids": ["56912345678@s.whatsapp.net"],
   "groups": {
-    "120363xxxxxxxxx@g.us": {
+    "120363000000000000@g.us": {
       "requireMention": true,
-      "allowFrom": []
+      "allowFrom": [],
+      "historyScope": "own"
     }
+  },
+  "dms": {
+    "56987654321@s.whatsapp.net": { "historyScope": "own" }
   },
   "pending": {
     "a1b2c3": {
-      "senderId": "5491166667777@s.whatsapp.net",
-      "chatId": "5491166667777@s.whatsapp.net",
+      "senderId": "56987654321@s.whatsapp.net",
+      "chatId": "56987654321@s.whatsapp.net",
       "createdAt": 1713543200000,
       "expiresAt": 1713546800000,
       "replies": 1
@@ -87,10 +92,19 @@ Field reference:
 |---|---|---|
 | `dmPolicy` | `"pairing" \| "allowlist" \| "disabled"` | Policy for DMs from unknown senders. |
 | `allowFrom` | `string[]` | JIDs allowed for direct messaging and permission-relay broadcast. |
-| `groups` | `Record<jid, {requireMention, allowFrom}>` | Per-group config. Absence = group drops. |
+| `ownerJids` | `string[]` | Cross-chat owner JIDs. May contain multiple entries because Baileys v7 can surface the same human under `@lid` and `@s.whatsapp.net`. Empty array = bootstrap mode (no scope enforcement yet). |
+| `groups` | `Record<jid, {requireMention, allowFrom, historyScope?}>` | Per-group config. Absence = group drops. `historyScope` defaults to `"own"` (sandboxed to self). |
+| `dms` | `Record<jid, {historyScope?}>` | Per-DM history scope overrides. Missing entry = `"own"`. |
 | `pending` | `Record<code, PendingEntry>` | Live pairing codes; expires after 1 hour. |
 
-Companions can count `allowFrom.length` to know whether the channel has any DM targets at all, or inspect `groups` to enumerate allowed groups.
+`historyScope` is `"own" \| "all" \| string[]`:
+- `"own"` — sandboxed to the chat's own history. Default when the field is absent.
+- `"all"` — can read every allowlisted chat.
+- `string[]` — own history plus each listed chat JID.
+
+Owners (JIDs in `ownerJids`) bypass `historyScope` entirely and can read every indexed chat. See [`docs/access.md#history-scope`](access.md#history-scope) for the runtime model (inbound context tracking, terminal bypass, concurrent-inbound race).
+
+Companions can count `allowFrom.length` to know whether the channel has any DM targets at all, inspect `groups` to enumerate allowed groups, or check `ownerJids.length === 0` to detect bootstrap mode.
 
 ### `config.json`
 
