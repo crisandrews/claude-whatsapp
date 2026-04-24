@@ -4,16 +4,31 @@ Reference for every WhatsApp tool the plugin exposes to Claude — arguments, re
 
 - [Quick reference](#quick-reference)
 - [Talking to Claude through WhatsApp](#talking-to-claude-through-whatsapp)
-- [`reply`](#reply)
-- [`react`](#react)
-- [`edit_message`](#edit_message)
-- [`delete_message`](#delete_message)
-- [`send_poll`](#send_poll)
-- [`download_attachment`](#download_attachment)
-- [`search_messages`](#search_messages)
-- [`fetch_history`](#fetch_history)
-- [`list_group_senders`](#list_group_senders)
-- [`export_chat`](#export_chat)
+
+**Messaging** — [`reply`](#reply) · [`react`](#react) · [`edit_message`](#edit_message) · [`delete_message`](#delete_message) · [`mark_read`](#mark_read) · [`send_poll`](#send_poll)
+
+**Message types** — [`send_location`](#send_location) · [`send_contact`](#send_contact) · [`send_link_preview`](#send_link_preview) · [`send_voice_note`](#send_voice_note) · [`forward_message`](#forward_message) · [`pin_message`](#pin_message)
+
+**Discovery & search** — [`list_chats`](#list_chats) · [`search_messages`](#search_messages) · [`search_contact`](#search_contact) · [`get_message_context`](#get_message_context) · [`fetch_history`](#fetch_history) · [`list_group_senders`](#list_group_senders)
+
+**Chat management** — [`archive_chat`](#archive_chat) · [`pin_chat`](#pin_chat) · [`mute_chat`](#mute_chat) · [`delete_chat`](#delete_chat) · [`clear_chat`](#clear_chat)
+
+**Group admin** — [`get_group_metadata`](#get_group_metadata) · [`update_group_subject`](#update_group_subject) · [`update_group_description`](#update_group_description) · [`update_group_settings`](#update_group_settings) · [`add_participants`](#add_participants) · [`remove_participants`](#remove_participants) · [`promote_admins`](#promote_admins) · [`demote_admins`](#demote_admins) · [`leave_group`](#leave_group) · [`toggle_group_ephemeral`](#toggle_group_ephemeral) · [`handle_join_request`](#handle_join_request)
+
+**Group lifecycle** — [`create_group`](#create_group) · [`join_group`](#join_group) · [`get_invite_code`](#get_invite_code) · [`revoke_invite_code`](#revoke_invite_code)
+
+**Contacts** — [`check_number_exists`](#check_number_exists) · [`get_business_profile`](#get_business_profile) · [`block_contact`](#block_contact) · [`unblock_contact`](#unblock_contact)
+
+**Profile self-mgmt** — [`update_profile_name`](#update_profile_name) · [`update_profile_status`](#update_profile_status) · [`update_profile_picture`](#update_profile_picture) · [`remove_profile_picture`](#remove_profile_picture) · [`update_privacy`](#update_privacy)
+
+**Calls** — [`reject_call`](#reject_call)
+
+**Presence** — [`send_presence`](#send_presence)
+
+**Analytics & export** — [`get_chat_analytics`](#get_chat_analytics) · [`export_chat`](#export_chat)
+
+**Media** — [`download_attachment`](#download_attachment)
+
 - [What's NOT a tool (yet)](#whats-not-a-tool-yet)
 
 All tools surface to the model as `mcp__whatsapp__<tool>`. Each one takes a `chat_id` (the JID from `meta.chat_id` on the inbound message) and enforces the access policy — you can only send into a DM that's on `allowFrom`, or a group that's in `groups{}`.

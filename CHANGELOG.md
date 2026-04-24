@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [1.17.2] — 2026-04-24
+
+### Fixed
+
+- `README.md` Highlights: voice transcription line claimed "no API keys" without acknowledging the cloud provider opt-in shipped in v1.13.0. Now reads "local Whisper by default (no API keys, 99+ languages); optional cloud providers (Groq / OpenAI) for higher quality on slower hardware".
+- `docs/media-voice.md` "What's NOT supported": removed the "Sending voice notes... isn't exposed" line — `send_voice_note` has been a tool since v1.15.0. Replaced with a positive callout linking to the tool reference, plus minor copy fixes (`send_contact` works for outbound vCards, `send_location` works for outbound static locations).
+- `docs/groups.md`: added a new "Group admin from Claude" section listing all 14 group MCP tools (`get_group_metadata`, `add_participants`, `promote_admins`, `create_group`, `join_group`, etc.) introduced across v1.13.0 → v1.16.0. Previously the doc made no mention of them — anyone reading the groups doc would conclude group admin "isn't supported".
+- `docs/state-contract.md`: documented the `raw_message TEXT` column added to `messages.db` in v1.16.0, including its purpose (powers `forward_message`), backward-compat behavior (older rows are NULL), the rough storage cost (~1 KB per message), and the privacy implication (caches more proto metadata, all of which already lives in Baileys' session state on the user's machine).
+- `docs/tools.md` table of contents: replaced the 10-tool list (which only covered the original tool set through v1.12) with a 12-category index covering all 52 tools. Anyone scanning the doc by TOC now finds every tool.
+
 ## [1.17.1] — 2026-04-24
 
 ### Added

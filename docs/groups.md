@@ -3,6 +3,7 @@
 Everything you need to add the bot to a WhatsApp group, decide who in the group can talk to it, and switch the policy later. The plugin treats groups as fully independent from DMs — see [Group access vs DM access](#group-access-vs-dm-access) at the bottom.
 
 - [Quick reference](#quick-reference)
+- [Group admin from Claude](#group-admin-from-claude)
 - [The four policies](#the-four-policies)
 - [Worked examples](#worked-examples)
 - [Discovery flow](#discovery-flow)
@@ -24,6 +25,29 @@ Everything you need to add the bot to a WhatsApp group, decide who in the group 
 | `/whatsapp:access group-revoke <group-jid> <member-jid>` | Remove a member from the group's whitelist. |
 | `/whatsapp:access remove-group <jid>` | Stop accepting messages from the group entirely. |
 | `/whatsapp:access` | List configured groups + recently dropped (unknown) groups. |
+
+## Group admin from Claude
+
+Beyond the access skill commands above (which the **user** runs in their terminal to gate which groups can talk to the bot), Claude itself has MCP tools to **read and mutate** groups it's already admin of. Per-tool reference with arguments and pitfalls in [docs/tools.md](tools.md).
+
+| Tool | What it does |
+|---|---|
+| `get_group_metadata` | Live participant list, admin flags, settings (announce / restrict / ephemeral). |
+| `list_group_senders` | Participants who have spoken in the group (from local SQLite, with push names). Complements `get_group_metadata` (which lists all current members regardless of activity). |
+| `create_group` | Create a new group. Bot becomes super admin. Auto-registers in `access.groups` open mode. |
+| `join_group` | Join a group via invite code or full `chat.whatsapp.com/<code>` URL. Auto-registers. |
+| `leave_group` | Bot leaves the group; auto-removes the entry from `access.groups`. |
+| `update_group_subject` | Rename the group. Bot must be admin. |
+| `update_group_description` | Update or clear the group description. |
+| `update_group_settings` | Toggle `admins_only_messages` (announcement mode) and `admins_only_info` (locked mode). |
+| `add_participants` | Add user JIDs to the group. Returns per-participant status (success / not-found / already-in / permission-denied). |
+| `remove_participants` | Remove user JIDs. Same status reporting. |
+| `promote_admins` / `demote_admins` | Change admin status. |
+| `toggle_group_ephemeral` | Set or clear the disappearing-messages timer (24h / 7d / 30d / off). |
+| `handle_join_request` | List, approve, or reject pending join requests for groups with restricted-add. |
+| `get_invite_code` / `revoke_invite_code` | Read or rotate the group invite link. |
+
+All group admin tools require the group to be in `access.groups` (use `add-group` first), and require the bot to be an admin of the group — Baileys propagates a clean error otherwise.
 
 Group state is stored in `<channel-dir>/access.json` under the `groups` field:
 

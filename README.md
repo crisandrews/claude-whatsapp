@@ -34,7 +34,7 @@ This plugin fills that gap. It connects your WhatsApp number directly to Claude 
 - **[Access control](#access-control)** — pairing codes, allowlist, group gating with `requireMention`. Nobody talks to your agent without permission.
 - **[Permission relay](#permission-requests-over-whatsapp)** — when Claude wants to run a tool, get the prompt on WhatsApp; approve or deny with a 👍 reaction or `yes <id>` reply.
 - **[Local search, export, and discovery](#search-history-and-export)** — every message indexed locally; full-text search, contact and chat discovery, message-context lookup, request older messages from WhatsApp, dump chats to markdown / jsonl / csv.
-- **[Voice transcription](#voice-transcription-optional)** — local Whisper, no API keys, 99+ languages.
+- **[Voice transcription](#voice-transcription-optional)** — local Whisper by default (no API keys, 99+ languages); optional cloud providers (Groq / OpenAI) for higher quality on slower hardware.
 - **[Media pipeline](#media)** — inbound images, audio, video, and documents auto-downloaded for Claude to read.
 - **[Reply shaping](#reply-shaping)** — paragraph-aware chunking, optional ack reaction, auto-document for long replies, message editing without push notifications.
 - **[Inbound debouncing](#inbound-debouncing)** — rapid-fire texts from the same sender are batched into a single agent turn, so Claude stops answering mid-thought when the user is still typing.

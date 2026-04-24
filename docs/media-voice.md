@@ -245,9 +245,10 @@ This is the edge case worth remembering: vCard body isn't passed through today.
 
 ## What's NOT supported
 
-- **Sending voice notes.** Inbound voice is received and optionally transcribed; outbound (Claude sending a voice note) isn't exposed.
 - **Viewing stickers as images.** Stickers are acknowledged by text placeholder only; no file is downloaded.
-- **Full vCard parsing for contacts.** Only the display name is forwarded today.
+- **Full vCard parsing for inbound contacts.** Only the display name is forwarded today (outbound vCards via `send_contact` work fine — see [docs/tools.md#send_contact](tools.md#send_contact)).
 - **GIFs as GIFs.** WhatsApp's GIF format is actually MP4 video with a GIF flag — they arrive as `[Video]` in the current pipeline.
-- **Location streaming ("live location").** Only static locations.
+- **Location streaming ("live location").** Only static locations inbound; `send_location` outbound is supported.
 - **View-once media.** Treated as regular media by Baileys in some versions, not in others — reliability here is a WhatsApp-side moving target; don't depend on it.
+
+> **Outbound voice notes** are supported via `send_voice_note` (since v1.15.0) — the tool accepts any audio file path and converts it to OGG Opus via `ffmpeg` before sending as a push-to-talk message. See [docs/tools.md#send_voice_note](tools.md#send_voice_note).

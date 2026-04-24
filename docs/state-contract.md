@@ -171,7 +171,11 @@ Useful for companion UIs that want to surface "groups awaiting allow". Entries d
 
 SQLite + FTS5 store of all indexed messages. Schema described in [docs/search-export.md#where-the-store-lives](search-export.md#where-the-store-lives).
 
-Prefer calling the MCP tools (`search_messages`, `list_group_senders`, `export_chat`) over opening the file directly — the WAL journal can be in flight. If you do open it, use a read-only connection with `journal_mode=WAL` respected.
+**Schema additions worth noting for companion plugins:**
+
+- **`raw_message TEXT` column** (added v1.16.0) — caches the full Baileys `WAMessage` proto serialized as JSON for every inbound, outbound, and history-backfilled message. Powers the `forward_message` MCP tool. Older rows have `raw_message=NULL`. The column adds roughly 1 KB per message on average; budget DB growth accordingly. Privacy implication: stores more sender / device metadata than the text-only fields, all of which already lives on the user's machine via Baileys' own session state. Migration is idempotent — `ALTER TABLE messages ADD COLUMN raw_message TEXT` runs on `initDb()` if the column is missing.
+
+Prefer calling the MCP tools (`search_messages`, `list_group_senders`, `export_chat`, `forward_message`) over opening the file directly — the WAL journal can be in flight. If you do open it, use a read-only connection with `journal_mode=WAL` respected.
 
 ### `inbox/`
 
