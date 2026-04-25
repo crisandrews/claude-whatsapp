@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.18.0] — 2026-04-24
+
 ### Added
 
 - Chat-scope governance. New `access.json` fields: `ownerJids: string[]` identifies the cross-chat owner(s); `groups[*].historyScope` and `dms[*].historyScope` configure per-chat read access (`"own"` | `"all"` | `string[]` of extra chat JIDs). New subcommands: `/whatsapp:access show-owner`, `set-owner <jid>`, `show-scope <chat>`, `set-scope <chat> <scope>`. `set-scope` validates every CSV JID against the allowlist so typos can't create phantom state.
