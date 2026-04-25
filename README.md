@@ -31,7 +31,7 @@ This plugin fills that gap. It connects your WhatsApp number directly to Claude 
 ## [Highlights](#highlights)
 
 - **[Native WhatsApp channel](#quick-setup)** — scan a QR (or use a pairing code on headless servers), pair your contacts, start chatting with Claude.
-- **[Access control](#access-control)** — pairing codes, allowlist, group gating with `requireMention`. Nobody talks to your agent without permission.
+- **[Access control](#access-control)** — pairing codes, allowlist, group gating with `requireMention`, plus per-chat history scope (each chat sees its own history by default; designated owners read all). Nobody talks to your agent without permission, and no chat reads another's history.
 - **[Permission relay](#permission-requests-over-whatsapp)** — when Claude wants to run a tool, get the prompt on WhatsApp; approve or deny with a 👍 reaction or `yes <id>` reply.
 - **[Local search, export, and discovery](#search-history-and-export)** — every message indexed locally; full-text search, contact and chat discovery, message-context lookup, request older messages from WhatsApp, dump chats to markdown / jsonl / csv.
 - **[Voice transcription](#voice-transcription-optional)** — local Whisper by default (no API keys, 99+ languages); optional cloud providers (Groq / OpenAI) for higher quality on slower hardware.
