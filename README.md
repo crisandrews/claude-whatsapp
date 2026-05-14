@@ -132,6 +132,7 @@ In-depth guides, each with worked examples end-to-end. The README is the at-a-gl
 
 - **[docs/operations.md](docs/operations.md)** — background service (launchd/systemd/Task Scheduler), updates, cache, multi-instance, logs, reconnection.
 - **[docs/state-contract.md](docs/state-contract.md)** — public contract for companion plugins: channel dir, public files, MCP capabilities, ClawCode integration walkthrough.
+- **[docs/scope-envelope-contract.md](docs/scope-envelope-contract.md)** — cross-plugin per-inbound request envelope contract. Mirrored byte-exact with peer plugins that consume it. Wire-level constants, payload schema, validation rules, threat model.
 - **[docs/troubleshooting.md](docs/troubleshooting.md)** — symptoms → causes → fixes; covers every connection state and the most common gotchas.
 
 ## [Access control](#access-control)

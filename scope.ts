@@ -60,7 +60,12 @@ export function resolveScope(
   const scope = raw ?? 'own'
   if (scope === 'all') return 'all'
   if (scope === 'own') return { allowed: new Set([ctx.chatId]) }
-  return { allowed: new Set([ctx.chatId, ...scope]) }
+  if (Array.isArray(scope)) return { allowed: new Set([ctx.chatId, ...scope]) }
+  // Forward-compat: any string value other than 'own'/'all' (or any other
+  // type that slipped past the type system via untyped access.json load)
+  // falls back to the safest default — this chat only. Without the guard
+  // the spread `...scope` on a string would explode it into char-codes.
+  return { allowed: new Set([ctx.chatId]) }
 }
 
 // Intersection of the current scope with the universe of allowlisted chats,

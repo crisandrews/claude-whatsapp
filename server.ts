@@ -46,6 +46,12 @@ import {
   type InboundContext,
   type ScopeAccessView,
 } from './scope.js'
+import { writeInboundMarker } from './marker.js'
+import { writeRequestEnvelope } from './envelope.js'
+import {
+  resolveContextForCall,
+  extractEnvelopeToken,
+} from './scope-context.js'
 
 // ---------------------------------------------------------------------------
 // Dynamic imports — Baileys, QRCode, Boom are loaded AFTER MCP handshake
@@ -693,9 +699,20 @@ function gate(
 let currentInboundContext: InboundContext | null = null
 const INBOUND_CONTEXT_TTL_MS = 60_000
 
-function setInboundContext(chatId: string, senderId: string): void {
-  if (!chatId || chatId === 'system') return
-  currentInboundContext = { chatId, senderId, ts: Date.now() }
+function setInboundContext(chatId: string, senderId: string): string | null {
+  if (!chatId || chatId === 'system') return null
+  const ts = Date.now()
+  currentInboundContext = { chatId, senderId, ts }
+  // Phase 4a-2.5: publish the same context to a public marker file so
+  // peer plugins (e.g. OpenCLAUDE) running in a separate MCP server can
+  // mirror per-chat scope decisions. Best-effort; failures are silent.
+  writeInboundMarker(CHANNEL_DIR, chatId, senderId, ts)
+  // Phase 6: per-inbound request envelope. Returns a 43-char base64url token
+  // that callers embed in the resulting notification's meta block so peer
+  // plugins can bind that specific MCP call to this inbound (instead of
+  // racing on `currentInboundContext` freshness). Failure → null; callers
+  // dispatch notification without the token and peers fall back to guest.
+  return writeRequestEnvelope(CHANNEL_DIR, chatId, senderId, ts)
 }
 
 function getInboundContext(): InboundContext | null {
@@ -721,18 +738,38 @@ function scopeView(access: AccessState): ScopeAccessView {
   }
 }
 
-function assertReadable(chatId: string): void {
+function assertReadable(chatId: string, envelopeToken?: string): void {
+  const resolved = resolveContextForCall(
+    envelopeToken,
+    CHANNEL_DIR,
+    getInboundContext,
+  )
+  if (resolved.kind === 'invalid') {
+    throw new Error(
+      'history scope: requestEnvelopeToken invalid or expired; refusing to fall back to global context',
+    )
+  }
   assertReadableScope(
-    getInboundContext(),
+    resolved.ctx,
     scopeView(loadAccess()),
     chatId,
     { ownerBypass: ownerBypassEnabled() },
   )
 }
 
-function currentScopedAllowedChats(access: AccessState): string[] | null {
+function currentScopedAllowedChats(access: AccessState, envelopeToken?: string): string[] | null {
+  const resolved = resolveContextForCall(
+    envelopeToken,
+    CHANNEL_DIR,
+    getInboundContext,
+  )
+  if (resolved.kind === 'invalid') {
+    throw new Error(
+      'history scope: requestEnvelopeToken invalid or expired; refusing to fall back to global context',
+    )
+  }
   const result = scopedAllowedChats(
-    getInboundContext(),
+    resolved.ctx,
     scopeView(access),
     { ownerBypass: ownerBypassEnabled() },
   )
@@ -1154,7 +1191,7 @@ async function connectWhatsApp() {
         if (status === 'offer') {
           const videoTag = c.isVideo ? 'video ' : ''
           syslog(`incoming ${videoTag}call: id=${c.id} from=${c.from}`)
-          setInboundContext(c.from, c.from)
+          const envelopeToken = setInboundContext(c.from, c.from)
           mcp.notification({
             method: 'notifications/claude/channel',
             params: {
@@ -1169,6 +1206,7 @@ async function connectWhatsApp() {
                 call_id: c.id,
                 call_from: c.from,
                 is_video: c.isVideo ? 'true' : 'false',
+                ...(envelopeToken ? { requestEnvelopeToken: envelopeToken } : {}),
               },
             },
           })
@@ -1298,7 +1336,7 @@ async function handleInbound(msg: proto.IWebMessageInfo) {
 
   if (debounceMs <= 0 || hasAttachment || isReaction || !text) {
     flushInbound(bucketKey)
-    setInboundContext(chatId, senderId)
+    const envelopeToken = setInboundContext(chatId, senderId)
     mcp.notification({
       method: 'notifications/claude/channel',
       params: {
@@ -1309,6 +1347,7 @@ async function handleInbound(msg: proto.IWebMessageInfo) {
           user: pushName,
           user_id: senderId,
           ts,
+          ...(envelopeToken ? { requestEnvelopeToken: envelopeToken } : {}),
           ...meta,
         },
       },
@@ -1375,7 +1414,7 @@ function flushInbound(key: string): void {
   const content = bucket.messages.map(m => m.text).join('\n')
   const batchedCount = bucket.messages.length
 
-  setInboundContext(last.chatId, last.senderId)
+  const envelopeToken = setInboundContext(last.chatId, last.senderId)
   mcp.notification({
     method: 'notifications/claude/channel',
     params: {
@@ -1387,6 +1426,7 @@ function flushInbound(key: string): void {
         user_id: last.senderId,
         ts: last.ts,
         ...(batchedCount > 1 ? { batched_count: String(batchedCount) } : {}),
+        ...(envelopeToken ? { requestEnvelopeToken: envelopeToken } : {}),
       },
     },
   })
@@ -2070,6 +2110,7 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
           query: { type: 'string', description: 'FTS5 query. Supports MATCH syntax: plain words for AND, "exact phrase", word*, NEAR(a b, 5), -excluded.' },
           chat_id: { type: 'string', description: 'Optional: restrict to a single chat JID' },
           limit: { type: 'number', description: 'Max results (default 50, max 500)' },
+          requestEnvelopeToken: { type: 'string', description: 'Phase 6.1: 43-char envelope token from meta.requestEnvelopeToken of the inbound notification. When present, scope decisions bind to that inbound\'s chat/sender instead of the latest-global (closes concurrent-inbound race). Optional; omit for terminal/owner calls.' },
         },
         required: ['query'],
       },
@@ -2082,6 +2123,7 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
         properties: {
           chat_id: { type: 'string', description: 'JID of the chat to backfill' },
           count: { type: 'number', description: 'Approximate number of messages to request (default 50)' },
+          requestEnvelopeToken: { type: 'string', description: 'Phase 6.1: envelope token from notification meta. Binds this call to a specific inbound. Optional.' },
         },
         required: ['chat_id'],
       },
@@ -2094,6 +2136,7 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
         properties: {
           chat_id: { type: 'string', description: 'JID of the chat (group or DM)' },
           since_days: { type: 'number', description: 'Optional lookback window in days. Default: all-time.' },
+          requestEnvelopeToken: { type: 'string', description: 'Phase 6.1: envelope token from notification meta. Binds this call to a specific inbound. Optional.' },
         },
         required: ['chat_id'],
       },
@@ -2109,6 +2152,7 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
           since_ts: { type: 'number', description: 'Optional unix-seconds lower bound' },
           until_ts: { type: 'number', description: 'Optional unix-seconds upper bound' },
           limit: { type: 'number', description: 'Max rows in the export (default 500, max 500)' },
+          requestEnvelopeToken: { type: 'string', description: 'Phase 6.1: envelope token from notification meta. Binds this call to a specific inbound. Optional.' },
         },
         required: ['chat_id'],
       },
@@ -2121,6 +2165,7 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
         properties: {
           limit: { type: 'number', description: 'Max chats to return. Default 50, clamped to 200.' },
           offset: { type: 'number', description: 'Number of chats to skip before returning (for pagination). Default 0.' },
+          requestEnvelopeToken: { type: 'string', description: 'Phase 6.1: envelope token from notification meta. Binds enumeration to a specific inbound. Optional.' },
         },
       },
     },
@@ -2133,6 +2178,7 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
           message_id: { type: 'string', description: 'The anchor message ID. Typically from `search_messages` results, `fetch_history`, or `meta.message_id` of an inbound notification.' },
           before: { type: 'number', description: 'Messages to fetch BEFORE the anchor. Default 5, clamped to 50.' },
           after: { type: 'number', description: 'Messages to fetch AFTER the anchor. Default 5, clamped to 50.' },
+          requestEnvelopeToken: { type: 'string', description: 'Phase 6.1: envelope token from notification meta. Binds this call to a specific inbound. Optional.' },
         },
         required: ['message_id'],
       },
@@ -2182,6 +2228,7 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
         properties: {
           query: { type: 'string', description: 'Substring to search: name fragment ("juan") or phone/JID fragment ("+5491" or "5491155"). Case-insensitive.' },
           limit: { type: 'number', description: 'Max results to return. Default 20, clamped to 100.' },
+          requestEnvelopeToken: { type: 'string', description: 'Phase 6.1: envelope token from notification meta. Binds enumeration to a specific inbound. Optional.' },
         },
         required: ['query'],
       },
@@ -2605,6 +2652,7 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
         properties: {
           chat_id: { type: 'string', description: 'Chat JID. Must be in the access allowlist.' },
           since_days: { type: 'number', description: 'Optional lookback window in days. Default: all-time. E.g. `since_days: 7` for the last week.' },
+          requestEnvelopeToken: { type: 'string', description: 'Phase 6.1: envelope token from notification meta. Binds this call to a specific inbound. Optional.' },
         },
         required: ['chat_id'],
       },
@@ -2617,6 +2665,7 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
         properties: {
           target_chat_id: { type: 'string', description: 'JID of the chat to forward TO. Must be in the access allowlist.' },
           message_id: { type: 'string', description: 'Source message ID to forward. Get it from `search_messages`, `get_message_context`, or an inbound `meta.message_id`. Must have been indexed with raw_message caching (v1.16.0+).' },
+          requestEnvelopeToken: { type: 'string', description: 'Phase 6.1: envelope token from notification meta. Binds source-chat scope to a specific inbound. Optional.' },
         },
         required: ['target_chat_id', 'message_id'],
       },
@@ -2942,15 +2991,16 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       if (!isDbReady()) {
         return { content: [{ type: 'text', text: 'Local message store not available — search disabled.' }] }
       }
+      const envelopeToken = extractEnvelopeToken(args as Record<string, unknown>)
       const query = (args as any).query as string
       const chat_id = (args as any).chat_id as string | undefined
       const limit = (args as any).limit as number | undefined
       if (!query || typeof query !== 'string') throw new Error('query is required')
       let chat_ids: string[] | undefined
       if (chat_id) {
-        assertReadable(chat_id)
+        assertReadable(chat_id, envelopeToken)
       } else {
-        const allowed = currentScopedAllowedChats(loadAccess())
+        const allowed = currentScopedAllowedChats(loadAccess(), envelopeToken)
         if (allowed !== null) chat_ids = allowed
       }
       const results = searchMessages({ query, chat_id, chat_ids, limit })
@@ -2968,10 +3018,11 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
 
     case 'fetch_history': {
       if (!sock) throw new Error('WhatsApp is not connected')
+      const envelopeToken = extractEnvelopeToken(args as Record<string, unknown>)
       const chat_id = (args as any).chat_id as string
       const count = ((args as any).count as number | undefined) ?? 50
       if (!chat_id) throw new Error('chat_id is required')
-      assertReadable(chat_id)
+      assertReadable(chat_id, envelopeToken)
       const oldest = getOldestMessage(chat_id)
       if (!oldest) {
         return { content: [{ type: 'text', text: `No anchor message known for ${chat_id} — wait for at least one live message before requesting history.` }] }
@@ -3047,10 +3098,11 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       if (!isDbReady()) {
         return { content: [{ type: 'text', text: 'Local message store not available — sender list unavailable.' }] }
       }
+      const envelopeToken = extractEnvelopeToken(args as Record<string, unknown>)
       const chat_id = (args as any).chat_id as string
       const since_days = (args as any).since_days as number | undefined
       if (!chat_id) throw new Error('chat_id is required')
-      assertReadable(chat_id)
+      assertReadable(chat_id, envelopeToken)
       const since_ts = since_days ? Math.floor(Date.now() / 1000) - since_days * 86400 : undefined
       const senders = getChatSenders(chat_id, since_ts)
       if (senders.length === 0) {
@@ -3068,13 +3120,14 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       if (!isDbReady()) {
         return { content: [{ type: 'text', text: 'Local message store not available — export disabled.' }] }
       }
+      const envelopeToken = extractEnvelopeToken(args as Record<string, unknown>)
       const chat_id = (args as any).chat_id as string
       const format = ((args as any).format as ExportFormat | undefined) ?? 'markdown'
       const since_ts = (args as any).since_ts as number | undefined
       const until_ts = (args as any).until_ts as number | undefined
       const limit = ((args as any).limit as number | undefined) ?? 500
       if (!chat_id) throw new Error('chat_id is required')
-      assertReadable(chat_id)
+      assertReadable(chat_id, envelopeToken)
       const rows = getMessages({ chat_id, after_ts: since_ts, before_ts: until_ts, limit })
       if (rows.length === 0) {
         return { content: [{ type: 'text', text: `No messages indexed for ${chat_id}.` }] }
@@ -3097,6 +3150,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       if (!isDbReady()) {
         return { content: [{ type: 'text', text: 'Local message store not available — list_chats disabled.' }] }
       }
+      const envelopeToken = extractEnvelopeToken(args as Record<string, unknown>)
       const rawLimit = (args as any).limit
       const rawOffset = (args as any).offset
       const limit = typeof rawLimit === 'number' && rawLimit > 0 ? Math.min(rawLimit, 200) : 50
@@ -3104,7 +3158,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
 
       const access = loadAccess()
       const fullUniverse: string[] = [...access.allowFrom, ...Object.keys(access.groups)]
-      const scoped = currentScopedAllowedChats(access)
+      const scoped = currentScopedAllowedChats(access, envelopeToken)
       // null → unrestricted (owner/bootstrap/bypass) → use full universe.
       // [] → scope is 'denied' or empty, return empty response without SQL.
       const allowedIds: string[] = scoped ?? fullUniverse
@@ -3280,6 +3334,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       if (!isDbReady()) {
         return { content: [{ type: 'text', text: 'Local message store not available — get_message_context disabled.' }] }
       }
+      const envelopeToken = extractEnvelopeToken(args as Record<string, unknown>)
       const message_id = (args as any).message_id as string
       if (!message_id) throw new Error('message_id is required')
       const rawBefore = (args as any).before
@@ -3290,7 +3345,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       // Scope the anchor lookup: without this, a message_id collision across
       // chats could surface a row from a chat outside the caller's scope.
       const accessForCtx = loadAccess()
-      const scopedIds = currentScopedAllowedChats(accessForCtx)
+      const scopedIds = currentScopedAllowedChats(accessForCtx, envelopeToken)
       const lookupChatIds = scopedIds
         ?? [...accessForCtx.allowFrom, ...Object.keys(accessForCtx.groups)]
       const ctx = getMessageContext(message_id, before, after, lookupChatIds)
@@ -3301,7 +3356,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
 
       try {
         assertAllowedChat(ctx.anchor.chat_id)
-        assertReadable(ctx.anchor.chat_id)
+        assertReadable(ctx.anchor.chat_id, envelopeToken)
       } catch {
         return { content: [{ type: 'text', text: `Message \`${message_id}\` belongs to chat \`${ctx.anchor.chat_id}\`, which is not readable from this session. Add it via /whatsapp:access or ask the owner.` }] }
       }
@@ -3330,6 +3385,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       if (!isDbReady()) {
         return { content: [{ type: 'text', text: 'Local message store not available — search_contact disabled.' }] }
       }
+      const envelopeToken = extractEnvelopeToken(args as Record<string, unknown>)
       const query = (args as any).query as string
       if (!query || typeof query !== 'string' || !query.trim()) {
         throw new Error('query is required and must be a non-empty string')
@@ -3342,7 +3398,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       if (fullUniverse.length === 0) {
         return { content: [{ type: 'text', text: 'No allowed chats in access.json. Contacts are only searched within allowlisted chats — configure /whatsapp:access first.' }] }
       }
-      const scoped = currentScopedAllowedChats(access)
+      const scoped = currentScopedAllowedChats(access, envelopeToken)
       const allowedIds: string[] = scoped ?? fullUniverse
 
       const results = searchContacts(query.trim(), limit, allowedIds)
@@ -3923,6 +3979,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       if (!isDbReady()) {
         return { content: [{ type: 'text', text: 'Local message store not available — forward_message disabled.' }] }
       }
+      const envelopeToken = extractEnvelopeToken(args as Record<string, unknown>)
       const target_chat_id = (args as any).target_chat_id as string
       const message_id = (args as any).message_id as string
       if (!target_chat_id || typeof target_chat_id !== 'string') throw new Error('target_chat_id is required')
@@ -3935,7 +3992,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       // Without this, a naked id lookup across all chats would let a non-owner
       // forward messages from any chat they know the id of.
       const accessForFwd = loadAccess()
-      const scopedForFwd = currentScopedAllowedChats(accessForFwd)
+      const scopedForFwd = currentScopedAllowedChats(accessForFwd, envelopeToken)
       const fwdLookupChatIds = scopedForFwd
         ?? [...accessForFwd.allowFrom, ...Object.keys(accessForFwd.groups)]
 
@@ -3948,7 +4005,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
 
       const sourceChatId = rawMessage?.key?.remoteJid || '(unknown)'
       if (sourceChatId && sourceChatId !== '(unknown)') {
-        assertReadable(sourceChatId)
+        assertReadable(sourceChatId, envelopeToken)
       }
 
       let sent: any
@@ -3979,12 +4036,13 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       if (!isDbReady()) {
         return { content: [{ type: 'text', text: 'Local message store not available — get_chat_analytics disabled.' }] }
       }
+      const envelopeToken = extractEnvelopeToken(args as Record<string, unknown>)
       const chat_id = (args as any).chat_id as string
       const since_days = (args as any).since_days
       if (!chat_id || typeof chat_id !== 'string') throw new Error('chat_id is required')
 
       assertAllowedChat(chat_id)
-      assertReadable(chat_id)
+      assertReadable(chat_id, envelopeToken)
 
       const since_ts = typeof since_days === 'number' && since_days > 0
         ? Math.floor(Date.now() / 1000 - since_days * 86400)

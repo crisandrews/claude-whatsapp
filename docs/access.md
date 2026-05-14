@@ -278,3 +278,42 @@ The two systems are **independent**. Full breakdown in [docs/groups.md#group-acc
 - Allowing someone in a group does NOT let them DM the bot — they still have to pair (or be allowed by JID directly).
 
 If a person needs both: pair them (DM) AND add them via `group-allow` in the relevant group.
+
+---
+
+## Peer-plugin contracts (read by ClawCode/OpenCLAUDE, optional)
+
+Two on-disk artifacts are published in `<channel-dir>` for peer plugins. Both are best-effort, fail-silent, and entirely optional — claude-whatsapp works standalone if no peer plugin reads them.
+
+- **`.last-inbound.json`** — last inbound chat/sender mirror with 60 s TTL. See `marker.ts`. NOT authoritative for cross-plugin authorization (freshness ≠ identity).
+- **`.request-envelopes/<token>.json`** — per-inbound request envelope. Every inbound that triggers a `notifications/claude/channel` dispatch also generates a 32-byte random `requestEnvelopeToken`, written atomically under this directory with the inbound's chat/sender bound to the token. The token is embedded as `meta.requestEnvelopeToken` in the notification meta; peer plugins use it to bind specific MCP tool calls to the inbound that triggered them. Full schema, TTL (60 s), rotation (cap 500), reader hardening, and threat model: see `docs/scope-envelope-contract.md` (mirrored to OpenCLAUDE/docs/scope-envelope-contract.md byte-exact).
+
+These artifacts respect the same 0o600 file mode / 0o700 directory mode as `access.json`. Anyone who can read the channel directory can read them, by design (they live alongside `access.json` and inherit its privacy posture).
+
+### Agent guidance — forwarding `requestEnvelopeToken` to scoped tools
+
+When an inbound triggers an agent turn via `notifications/claude/channel`, the notification meta carries `requestEnvelopeToken` (a 43-char base64url string) for every real inbound (not for `chat_id='system'` boot notifications).
+
+**Agents MUST forward `meta.requestEnvelopeToken`** to these scoped MCP tools whenever they call them in response to that inbound:
+
+- `search_messages`
+- `fetch_history`
+- `list_chats`
+- `list_group_senders`
+- `get_message_context`
+- `search_contact`
+- `export_chat`
+- `get_chat_analytics`
+- `forward_message`
+
+Pass it as `requestEnvelopeToken: "<token>"` in the tool args.
+
+Why: the token binds the agent's specific tool call back to the chat/sender of the inbound that triggered the agent's turn. Without it the tool consults a process-global "most recent inbound" context, which races under concurrent inbounds from different chats and can apply the wrong scope (chat B's permissions to chat A's call).
+
+Rules:
+- **Forward** when handling a channel-originated turn (the `requestEnvelopeToken` is in the notification's meta).
+- **Omit** when calling these tools from a terminal session, an owner-bypass flow (`WHATSAPP_OWNER_BYPASS=1`), or a scheduled / autonomous run with no inbound — the tools fall back to the global context for backwards compatibility.
+- **NEVER** pass an empty string `""` or a guessed/edited token. Empty strings and malformed tokens are rejected as fail-closed (the tool throws a history-scope error) by design — silent fallback would re-open the race the contract is designed to close.
+- If the inbound's notification meta lacks `requestEnvelopeToken` (older claude-whatsapp build / system notifications), simply omit the field.
+
+If a peer plugin (today: OpenCLAUDE) is also installed and configured for scope, the same token is forwarded to that plugin's scoped tools (`memory_search`, `memory_get`, `memory_context`, `voice_transcribe`) per OpenCLAUDE's `AGENTS.md`.

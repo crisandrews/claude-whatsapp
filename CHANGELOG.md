@@ -2,6 +2,41 @@
 
 ## [Unreleased]
 
+## [1.19.0] — 2026-05-13
+
+### Why this release matters
+
+Two improvements that make `historyScope` enforcement reliable under concurrent inbound traffic:
+
+1. **Cross-plugin contract**: claude-whatsapp now publishes a short-lived request envelope token for every inbound dispatch. Peer plugins (e.g. OpenCLAUDE 1.5.0+) that index channel content can use it to bind their MCP calls to the specific inbound that triggered the agent's turn — turning their indexed-channel search/recall surfaces from "unscoped global memory" into "scoped to the chat that asked for it." Without a peer plugin reading the token, the writer is a no-op fail-silent audit artifact.
+
+2. **Internal race fix**: claude-whatsapp's own 9 scoped MCP read tools previously consulted a process-global "most recent inbound" context. Under concurrent inbounds from chats A and B, a tool call dispatched for A could read scope from B's overwrite. The same envelope token now binds these internal calls to the inbound that triggered them. Agents that don't forward the token retain pre-1.19 behavior exactly — the fix is purely additive.
+
+Recommend updating OpenCLAUDE in parallel to 1.5.0+ to receive cross-plugin per-chat semantics; both repos must release together for the full guarantee.
+
+### Added
+
+- Envelope: new `envelope.ts` module emits 32-byte base64url (43-char) tokens to `<channel-dir>/.request-envelopes/<token>.json` (mode `0o600`, dir `0o700`) on every inbound dispatch. Atomic `O_EXCL` temp+rename write, rotation cap 500 (oldest by mtime pruned), 60s TTL cleanup with 5s clock-skew tolerance on every write. Pure `parseRequestEnvelope` validator + hardened `loadRequestEnvelope` reader for the internal binding path. Token is embedded in the inbound's notification meta as `meta.requestEnvelopeToken`.
+- Internal binding: 9 scoped MCP tools (`search_messages`, `fetch_history`, `list_chats`, `list_group_senders`, `get_message_context`, `search_contact`, `export_chat`, `get_chat_analytics`, `forward_message`) accept an optional `requestEnvelopeToken: string` arg. When forwarded from the inbound's `meta.requestEnvelopeToken`, scope decisions bind to the inbound's chat/sender from the on-disk envelope. When omitted, behavior is unchanged.
+- Lib: new `scope-context.ts` with `resolveContextForCall` and `extractEnvelopeToken`. Present-but-malformed tokens (empty string, non-string, wrong charset/length) throw a clear history-scope error instead of silently falling back to the global — closing the race the contract is designed to close.
+- Docs: new `docs/scope-envelope-contract.md` (mirrored byte-exact with the peer plugin) documents the wire-level constants, payload schema, validation rules, threat model, and the same-uid filesystem forge architectural out-of-scope. `docs/access.md` adds a peer-plugin contracts section pointing at it plus an "Agent guidance — forwarding `requestEnvelopeToken` to scoped tools" subsection listing the 9 affected tools, the forward/omit rules, and the explicit "never pass an empty string or guessed token" guarantee.
+
+### Changes
+
+- `setInboundContext(chatId, senderId)` now returns `string | null` — the envelope token written for this inbound, or `null` if the write failed. All 3 inbound notification dispatch sites capture the return and embed it in the notification meta.
+- `assertReadable(chatId, envelopeToken?)` and `currentScopedAllowedChats(access, envelopeToken?)` extended with optional envelope token. Token-present-invalid throws. Token-absent falls back to the global context (existing behavior).
+
+### Fixes
+
+- Scope: `resolveScope` no longer spreads `historyScope` when the value is a string outside `'own' | 'all'`. A non-standard value (e.g. `"members"`) previously exploded into char-codes via `...scope`; the new guard falls back to `'own'` (safe default).
+- Envelope: `crypto.randomBytes` wrapped in try/catch so transient RNG sourcing failures honor the writer's "never throws" invariant.
+- Envelope: `ensureDir` validates the existing envelope dir is a real directory (rejects symlinks) — defense against a same-uid attacker planting a redirect symlink before the first write.
+
+### Compatibility
+
+- Standalone claude-whatsapp users (no OpenCLAUDE installed) gain the internal race fix automatically — the envelope writer runs but the on-disk files are only consumed by the same plugin's own tools when the agent forwards the token. Agents that don't forward see pre-1.19 behavior.
+- Existing access.json schema, MCP tool signatures, and inbound notification payload shapes are unchanged except for the additive `meta.requestEnvelopeToken` field and the additive optional `requestEnvelopeToken` MCP tool arg.
+
 ## [1.18.0] — 2026-04-24
 
 ### Added
