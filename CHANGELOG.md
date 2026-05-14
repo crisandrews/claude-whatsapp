@@ -8,11 +8,11 @@
 
 Two improvements that make `historyScope` enforcement reliable under concurrent inbound traffic:
 
-1. **Cross-plugin contract**: claude-whatsapp now publishes a short-lived request envelope token for every inbound dispatch. Peer plugins (e.g. OpenCLAUDE 1.5.0+) that index channel content can use it to bind their MCP calls to the specific inbound that triggered the agent's turn — turning their indexed-channel search/recall surfaces from "unscoped global memory" into "scoped to the chat that asked for it." Without a peer plugin reading the token, the writer is a no-op fail-silent audit artifact.
+1. **Cross-plugin contract**: claude-whatsapp now publishes a short-lived request envelope token for every inbound dispatch. Peer plugins (e.g. ClawCode 1.5.0+) that index channel content can use it to bind their MCP calls to the specific inbound that triggered the agent's turn — turning their indexed-channel search/recall surfaces from "unscoped global memory" into "scoped to the chat that asked for it." Without a peer plugin reading the token, the writer is a no-op fail-silent audit artifact.
 
 2. **Internal race fix**: claude-whatsapp's own 9 scoped MCP read tools previously consulted a process-global "most recent inbound" context. Under concurrent inbounds from chats A and B, a tool call dispatched for A could read scope from B's overwrite. The same envelope token now binds these internal calls to the inbound that triggered them. Agents that don't forward the token retain pre-1.19 behavior exactly — the fix is purely additive.
 
-Recommend updating OpenCLAUDE in parallel to 1.5.0+ to receive cross-plugin per-chat semantics; both repos must release together for the full guarantee.
+Recommend updating ClawCode in parallel to 1.5.0+ to receive cross-plugin per-chat semantics; both repos must release together for the full guarantee.
 
 ### Added
 
@@ -34,7 +34,7 @@ Recommend updating OpenCLAUDE in parallel to 1.5.0+ to receive cross-plugin per-
 
 ### Compatibility
 
-- Standalone claude-whatsapp users (no OpenCLAUDE installed) gain the internal race fix automatically — the envelope writer runs but the on-disk files are only consumed by the same plugin's own tools when the agent forwards the token. Agents that don't forward see pre-1.19 behavior.
+- Standalone claude-whatsapp users (no ClawCode installed) gain the internal race fix automatically — the envelope writer runs but the on-disk files are only consumed by the same plugin's own tools when the agent forwards the token. Agents that don't forward see pre-1.19 behavior.
 - Existing access.json schema, MCP tool signatures, and inbound notification payload shapes are unchanged except for the additive `meta.requestEnvelopeToken` field and the additive optional `requestEnvelopeToken` MCP tool arg.
 
 ## [1.18.0] — 2026-04-24

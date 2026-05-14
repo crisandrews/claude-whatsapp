@@ -281,12 +281,12 @@ If a person needs both: pair them (DM) AND add them via `group-allow` in the rel
 
 ---
 
-## Peer-plugin contracts (read by ClawCode/OpenCLAUDE, optional)
+## Peer-plugin contracts (read by ClawCode/ClawCode, optional)
 
 Two on-disk artifacts are published in `<channel-dir>` for peer plugins. Both are best-effort, fail-silent, and entirely optional — claude-whatsapp works standalone if no peer plugin reads them.
 
 - **`.last-inbound.json`** — last inbound chat/sender mirror with 60 s TTL. See `marker.ts`. NOT authoritative for cross-plugin authorization (freshness ≠ identity).
-- **`.request-envelopes/<token>.json`** — per-inbound request envelope. Every inbound that triggers a `notifications/claude/channel` dispatch also generates a 32-byte random `requestEnvelopeToken`, written atomically under this directory with the inbound's chat/sender bound to the token. The token is embedded as `meta.requestEnvelopeToken` in the notification meta; peer plugins use it to bind specific MCP tool calls to the inbound that triggered them. Full schema, TTL (60 s), rotation (cap 500), reader hardening, and threat model: see `docs/scope-envelope-contract.md` (mirrored to OpenCLAUDE/docs/scope-envelope-contract.md byte-exact).
+- **`.request-envelopes/<token>.json`** — per-inbound request envelope. Every inbound that triggers a `notifications/claude/channel` dispatch also generates a 32-byte random `requestEnvelopeToken`, written atomically under this directory with the inbound's chat/sender bound to the token. The token is embedded as `meta.requestEnvelopeToken` in the notification meta; peer plugins use it to bind specific MCP tool calls to the inbound that triggered them. Full schema, TTL (60 s), rotation (cap 500), reader hardening, and threat model: see `docs/scope-envelope-contract.md` (mirrored to ClawCode/docs/scope-envelope-contract.md byte-exact).
 
 These artifacts respect the same 0o600 file mode / 0o700 directory mode as `access.json`. Anyone who can read the channel directory can read them, by design (they live alongside `access.json` and inherit its privacy posture).
 
@@ -316,4 +316,4 @@ Rules:
 - **NEVER** pass an empty string `""` or a guessed/edited token. Empty strings and malformed tokens are rejected as fail-closed (the tool throws a history-scope error) by design — silent fallback would re-open the race the contract is designed to close.
 - If the inbound's notification meta lacks `requestEnvelopeToken` (older claude-whatsapp build / system notifications), simply omit the field.
 
-If a peer plugin (today: OpenCLAUDE) is also installed and configured for scope, the same token is forwarded to that plugin's scoped tools (`memory_search`, `memory_get`, `memory_context`, `voice_transcribe`) per OpenCLAUDE's `AGENTS.md`.
+If a peer plugin (today: ClawCode) is also installed and configured for scope, the same token is forwarded to that plugin's scoped tools (`memory_search`, `memory_get`, `memory_context`, `voice_transcribe`) per ClawCode's `AGENTS.md`.
