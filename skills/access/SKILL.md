@@ -4,9 +4,13 @@ description: Manage WhatsApp channel access control — approve or deny pairings
 user-invocable: true
 allowed-tools:
   - Read
-  - Write
   - Bash(ls *)
   - Bash(mkdir *)
+  - Bash(cat *)
+  - Bash(mv *)
+  - Bash(node *)
+  - Bash(chmod *)
+  - Bash(rm *)
   - AskUserQuestion
 ---
 
@@ -64,6 +68,58 @@ All access state lives in `$STATE_DIR/access.json`. Default when missing:
 
 ---
 
+## How to save `access.json` (Bash heredoc, NOT Write)
+
+`access.json` is on ClawCode's always-on protected-paths list as of ClawCode 1.6.0 — controlling that file lets an attacker forge `ownerJids`, so MCP `Write` / `Edit` writes are refused regardless of scope mode (`exec-gate: write to protected path refused (channel-access-json)`). The same defense covers `$STATE_DIR/approved/*.json` and `$STATE_DIR/config.json` when `$STATE_DIR` resolves to the global fallback `~/.claude/channels/whatsapp/` (everything under `~/.claude/` is protected). Route every save through `Bash` instead. Bash is NOT subject to the protected-paths defense (it gets a separate hard-deny only under armed exec-gate + non-owner-in-window, which doesn't apply to user-driven `/whatsapp:access` flows).
+
+### Pattern: write a full file via heredoc + validate + chmod + atomic mv
+
+After you Read + mutate the object in your reasoning, save it like this (substitute `<RESOLVED_STATE_DIR>` with the absolute path you found and `<FULL_MUTATED_JSON>` with the full updated object as a JSON literal):
+
+```
+Bash('rm -f "<RESOLVED_STATE_DIR>/access.json.tmp.$$" && umask 077 && cat > "<RESOLVED_STATE_DIR>/access.json.tmp.$$" << "JSON_EOF" &&
+<FULL_MUTATED_JSON>
+JSON_EOF
+node -e \'JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"))\' "<RESOLVED_STATE_DIR>/access.json.tmp.$$" \
+  && chmod 600 "<RESOLVED_STATE_DIR>/access.json.tmp.$$" \
+  && mv "<RESOLVED_STATE_DIR>/access.json.tmp.$$" "<RESOLVED_STATE_DIR>/access.json" \
+  && echo "saved access.json" \
+  || { rm -f "<RESOLVED_STATE_DIR>/access.json.tmp.$$"; echo "ABORTED: invalid JSON or filesystem error"; exit 1; }')
+```
+
+What each step does:
+- **`rm -f .tmp.$$`** — clear any pre-existing tmp file (including a symlink an attacker on a shared system could plant) before opening. `$$` is the shell's PID, making the suffix per-invocation and harder to race.
+- **`umask 077`** — forces newly-created files to mode `0o600` from the start. Closes the brief window where a `cat > .tmp` (before the later `chmod 600`) could create a `0o644` file readable by other local users.
+- **`cat > .tmp << "JSON_EOF" &&`** — heredoc body is verbatim text. Double-quoted delimiter disables shell expansion so `$`, backticks, and embedded `"` in JSON pass through untouched. Putting the heredoc write in the `&&` chain ensures a `cat` failure short-circuits the rest — without that `&&`, a `cat` that fails to open the tmp (e.g. ENOSPC mid-truncate, immutable bit) could leave stale content there for `node -e` to validate and `mv` to promote, silently clobbering the destination.
+- **`node -e 'JSON.parse(...)'`** — rejects malformed JSON BEFORE the rename. If the agent's reasoning produced a truncated or syntactically broken JSON, the existing `access.json` is never clobbered.
+- **`chmod 600`** — defense-in-depth on top of `umask 077`. Matches the server's mode (server.ts writes `access.json` with `0o600`).
+- **`mv`** — atomic replace. A server reader can never see a half-written file.
+- **`|| { rm -f .tmp.$$; ...; exit 1 }`** — cleanup on any failure. Leaves no stale `.tmp.$$` behind.
+
+After the Bash save, **always re-Read `access.json`** to confirm your mutation landed. If the expected change isn't visible, the server clobbered your write between your initial Read and the Bash save — tell the user explicitly: *"My save was overwritten by a concurrent server update. Re-run the command."* Don't pretend the save succeeded.
+
+### The same pattern for `approved/<senderId>.json`
+
+`approved/<senderId>.json` lives under `$STATE_DIR/approved/` — covered by ClawCode's `claude-home` protection when `$STATE_DIR` is the global fallback `~/.claude/channels/whatsapp/`. Use a similar heredoc compound (this one starts with `mkdir -p` so the allowed-tools entry `Bash(mkdir *)` covers it):
+
+```
+Bash('mkdir -p "<RESOLVED_STATE_DIR>/approved" && rm -f "<RESOLVED_STATE_DIR>/approved/<senderId>.json.tmp.$$" && umask 077 && cat > "<RESOLVED_STATE_DIR>/approved/<senderId>.json.tmp.$$" << "JSON_EOF" &&
+{"senderId":"<senderId>","chatId":"<chatId>"}
+JSON_EOF
+node -e \'JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"))\' "<RESOLVED_STATE_DIR>/approved/<senderId>.json.tmp.$$" \
+  && chmod 600 "<RESOLVED_STATE_DIR>/approved/<senderId>.json.tmp.$$" \
+  && mv "<RESOLVED_STATE_DIR>/approved/<senderId>.json.tmp.$$" "<RESOLVED_STATE_DIR>/approved/<senderId>.json" \
+  || { rm -f "<RESOLVED_STATE_DIR>/approved/<senderId>.json.tmp.$$"; echo "ABORTED: invalid JSON or filesystem error"; exit 1; }')
+```
+
+### User permission prompt + auto-allow caveat
+
+The user gets ONE Bash permission prompt per save (two if the `pair` flow also writes an `approved/*.json` — both are explicit user-consented writes by design: `access.json` gates who can talk to the agent, so file-tool writes are intentionally not the path. If the user has Bash on session-wide auto-allow, both prompts are suppressed — **flag to the user before approving auto-allow that it silently weakens this defense** (a prompt-injected agent could then write `ownerJids` without a checkpoint).
+
+Below, every step that says **"Save `access.json`"** means this Bash flow.
+
+---
+
 ## Dispatch on `$ARGUMENTS`
 
 ### No args — status
@@ -94,7 +150,7 @@ End with a concrete next step based on state:
    - Remove this entry from `pending`
    - Also remove any OTHER pending entries that share the same `senderId` or `chatId` — they are the same user with a different JID format.
    - Save `access.json`
-   - Write `$STATE_DIR/approved/<senderId>.json` with `{"senderId":"...","chatId":"..."}` — signals the server to send confirmation
+   - Save `$STATE_DIR/approved/<senderId>.json` with `{"senderId":"...","chatId":"..."}` (via Bash heredoc — see "How to save" reference at the top; the `approved/` path is covered by the same protected-paths defense when `$STATE_DIR` is the global fallback) — signals the server to send confirmation
    - Tell the user who was approved
 4. **If not found or expired:** tell the user
 
@@ -146,7 +202,7 @@ Then apply:
 2. Add to `groups` with defaults: `{"requireMention": true, "allowFrom": []}`
 3. If the user passed `--no-mention`, set `requireMention: false`
 4. Save `access.json`
-5. **Also** read `$STATE_DIR/recent-groups.json` if it exists; if `<group_jid>` is in there, remove that entry and write the file back (atomically: tmp + rename) so the discovery list stops surfacing this group.
+5. **Also** read `$STATE_DIR/recent-groups.json` if it exists; if `<group_jid>` is in there, remove that entry and save the full updated `recent-groups.json` through the SAME Bash heredoc + JSON.parse + chmod 600 + atomic mv pattern documented at the top of this skill (substitute `recent-groups.json` for `access.json` in every path). Do NOT use `Write` for this file — when `$STATE_DIR` is the global fallback `~/.claude/channels/whatsapp/`, it falls under ClawCode's `claude-home` protected-paths defense and `Write` is refused.
 6. Explain the four resulting policies the user can express on this group:
    - **Open to everyone** — `add-group <jid> --no-mention` (every message goes to Claude).
    - **Mention-only (everyone)** — `add-group <jid>` (default; Claude only sees messages that @-mention the bot or quote-reply one of its messages).

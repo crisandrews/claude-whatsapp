@@ -210,7 +210,7 @@ The JID is sanitized (`[^a-zA-Z0-9]` → `_`) and prefixed with `export-` so exp
 
 ## Windowing and limits
 
-The interplay here is the thing Codex flagged — don't assume the limits are the same across tools:
+Important: don't assume the limits are the same across tools.
 
 | Tool | Default `limit` | Max `limit` |
 |---|---|---|
