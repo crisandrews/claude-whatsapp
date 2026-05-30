@@ -281,6 +281,30 @@ If a person needs both: pair them (DM) AND add them via `group-allow` in the rel
 
 ---
 
+## Owner-DM access commands (optional, default off)
+
+By default, **all** access changes happen in your terminal — a chat message can be spoofed (someone can set their WhatsApp name to yours) or carry a prompt injection, so the bot never changes access in response to a chat message.
+
+If you want the convenience of accepting a group from your phone, you can opt in to a **narrow** set of owner-only commands you type in a 1:1 DM with the bot:
+
+- `!access add-group <jid@g.us>` — authorize a group in **mention-only** mode (the bot replies only when @-mentioned). It is never opened to every message from a DM command.
+- `!access remove-group <jid@g.us>` — remove a group.
+- `!access list` — show current access status.
+
+How it's kept safe:
+
+- **The bot, not the agent, handles these.** The command is parsed by the plugin and applied directly — it never reaches the AI/LLM, so it can't be talked into doing something else.
+- **Owner is verified by JID**, in-process — never by your display name. A non-owner who tries `!access …` is refused.
+- **Only the narrow set above.** Widening or sensitive commands (`--no-mention`, `group-allow`, `policy`, `pair`, `allow`, `revoke`, `set-owner`) stay terminal-only.
+- **Two independent switches are required to turn it on:**
+  1. Set the environment variable `WHATSAPP_ALLOW_OWNER_DM_MUTATIONS=1` in the plugin's environment (e.g. the messaging plugin's MCP `env` config), then restart. The bot cannot set this itself — it's the real security boundary.
+  2. Run `/whatsapp:access dm-mutations on` in the terminal.
+  If either is missing, the feature stays off.
+
+Trade-off to understand before enabling: with it on, anyone who controls your WhatsApp (e.g. an unlocked phone) could add/remove groups via these commands. It's a convenience-vs-exposure choice — leave it off unless you specifically want phone-side group management.
+
+---
+
 ## Peer-plugin contracts (read by ClawCode/ClawCode, optional)
 
 Two on-disk artifacts are published in `<channel-dir>` for peer plugins. Both are best-effort, fail-silent, and entirely optional — claude-whatsapp works standalone if no peer plugin reads them.

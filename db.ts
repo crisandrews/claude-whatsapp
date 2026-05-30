@@ -62,6 +62,41 @@ export interface GetMessagesOptions {
 
 export type ExportFormat = 'markdown' | 'jsonl' | 'csv'
 
+/**
+ * Neutralize a user-controlled display name before it is rendered into any
+ * agent- or operator-facing line. A crafted push name containing newlines,
+ * control chars, quotes, or backticks could otherwise inject fake log/markdown
+ * lines (e.g. a forged "owner" entry) into output that gets read back — or
+ * indexed into memory. Strip control chars, collapse whitespace, replace
+ * quote/backtick, and cap length.
+ */
+export function sanitizeDisplayName(name: string): string {
+  return name
+    .replace(/[\x00-\x1f\x7f]/g, ' ') // control chars incl. CR / LF / TAB
+    .replace(/["`]/g, "'") // neutralize quote/backtick injection
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 80)
+}
+
+/**
+ * Render an inbound sender for any agent- or operator-facing output.
+ *
+ * Identity is the JID (`sender_id`) — authoritative. The push/display name is
+ * user-controlled and spoofable, so it is shown only as a clearly-labelled,
+ * unverified (and sanitized) hint. A display name must NEVER stand alone as the
+ * sender's identity: that is the impersonation vector that let a non-owner be
+ * mistaken for the owner. Always pair the name with the JID.
+ */
+export function inboundSenderLabel(
+  pushName: string | null | undefined,
+  senderId: string | null | undefined,
+): string {
+  const jid = senderId || 'unknown'
+  const name = pushName ? sanitizeDisplayName(pushName) : ''
+  return name ? `${jid} (unverified name: "${name}")` : jid
+}
+
 const DEFAULT_LIMIT = 50
 const MAX_LIMIT = 500
 
@@ -417,6 +452,10 @@ export interface ChatSummary {
   last_text: string
   last_direction: 'in' | 'out'
   last_push_name: string | null
+  // Authoritative JID of the last inbound sender. Paired with last_push_name
+  // (which is a user-controlled, spoofable display name) so renderers can show
+  // identity by JID, never by name alone.
+  last_sender_id: string | null
   msg_count: number
 }
 
@@ -506,7 +545,11 @@ export function listChats(
       COUNT(*) AS msg_count,
       (SELECT text FROM messages m2 WHERE m2.chat_id = m.chat_id ORDER BY ts DESC LIMIT 1) AS last_text,
       (SELECT direction FROM messages m3 WHERE m3.chat_id = m.chat_id ORDER BY ts DESC LIMIT 1) AS last_direction,
-      (SELECT push_name FROM messages m4 WHERE m4.chat_id = m.chat_id AND direction = 'in' AND push_name IS NOT NULL ORDER BY ts DESC LIMIT 1) AS last_push_name
+      -- last_push_name and last_sender_id MUST come from the SAME latest inbound
+      -- row, or a JID could be paired with a different sender's name. Both
+      -- subselects use identical WHERE + ORDER so they resolve to one row.
+      (SELECT push_name FROM messages m4 WHERE m4.chat_id = m.chat_id AND m4.direction = 'in' AND m4.sender_id IS NOT NULL ORDER BY m4.ts DESC, m4.rowid DESC LIMIT 1) AS last_push_name,
+      (SELECT sender_id FROM messages m5 WHERE m5.chat_id = m.chat_id AND m5.direction = 'in' AND m5.sender_id IS NOT NULL ORDER BY m5.ts DESC, m5.rowid DESC LIMIT 1) AS last_sender_id
     FROM messages m
     WHERE chat_id IN (${placeholders})
     GROUP BY chat_id
@@ -522,6 +565,7 @@ export function listChats(
       last_text: r.last_text ?? '',
       last_direction: r.last_direction,
       last_push_name: r.last_push_name ?? null,
+      last_sender_id: r.last_sender_id ?? null,
       msg_count: r.msg_count,
     }))
   } catch {
@@ -648,11 +692,19 @@ export function searchContacts(
   const accessClause = useAccessFilter
     ? `AND m.chat_id IN (${allowedChatIds!.map(() => '?').join(',')})`
     : ''
+  // The name subquery must be scoped to the SAME allowed chats, or a contact's
+  // displayed name could be sourced from a chat the caller cannot read
+  // (identity leak / poisoning across scope boundaries).
+  const innerAccessClause = useAccessFilter
+    ? `AND mi.chat_id IN (${allowedChatIds!.map(() => '?').join(',')})`
+    : ''
 
   const sql = `
     SELECT
       m.sender_id,
-      (SELECT push_name FROM messages WHERE sender_id = m.sender_id AND push_name IS NOT NULL ORDER BY ts DESC LIMIT 1) AS push_name,
+      (SELECT push_name FROM messages mi
+         WHERE mi.sender_id = m.sender_id AND mi.direction = 'in' AND mi.push_name IS NOT NULL ${innerAccessClause}
+         ORDER BY mi.ts DESC, mi.rowid DESC LIMIT 1) AS push_name,
       COUNT(DISTINCT m.chat_id) AS chat_count,
       COUNT(*) AS message_count,
       MAX(m.ts) AS last_seen_ts
@@ -669,7 +721,10 @@ export function searchContacts(
     LIMIT ?
   `
 
+  // Param order follows SQL text order: inner subquery scope first, then the
+  // outer WHERE scope, then the two LIKE patterns, then the limit.
   const params: any[] = [
+    ...(useAccessFilter ? allowedChatIds! : []),
     ...(useAccessFilter ? allowedChatIds! : []),
     pattern,
     pattern,
@@ -712,7 +767,7 @@ function formatMarkdown(rows: MessageRow[]): string {
   const lines: string[] = []
   for (const r of rows) {
     const when = new Date(r.ts * 1000).toISOString()
-    const who = r.direction === 'out' ? 'Claude' : (r.push_name || r.sender_id || r.chat_id)
+    const who = r.direction === 'out' ? 'Claude' : inboundSenderLabel(r.push_name, r.sender_id ?? r.chat_id)
     lines.push(`**${who}** _(${when})_`)
     if (r.text) lines.push(r.text)
     if (r.meta && Object.keys(r.meta).length > 0) {

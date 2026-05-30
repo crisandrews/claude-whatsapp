@@ -53,7 +53,8 @@ All access state lives in `$STATE_DIR/access.json`. Default when missing:
   "ownerJids": [],
   "groups": {},
   "dms": {},
-  "pending": {}
+  "pending": {},
+  "allowOwnerDmMutations": false
 }
 ```
 
@@ -65,6 +66,7 @@ All access state lives in `$STATE_DIR/access.json`. Default when missing:
 | `groups` | `Record<string, {requireMention, allowFrom, historyScope?}>` | Group configurations. `historyScope` (optional, default `"own"`) controls which chats this group can read: `"own"` (sandboxed to itself), `"all"` (read every indexed chat), or a string array of extra chat JIDs. |
 | `dms` | `Record<string, {historyScope?}>` | Per-DM history scope overrides (same semantics as groups). DMs without an entry default to `"own"`. |
 | `pending` | `Record<string, PendingEntry>` | Pending pairing codes |
+| `allowOwnerDmMutations` | `boolean` | Runtime on/off for owner-DM access commands (the `!access …` namespace in a 1:1 DM). Default `false`. This is only ONE of two required factors — the other is the out-of-band env var `WHATSAPP_ALLOW_OWNER_DM_MUTATIONS=1`. Both must be set for any owner-DM mutation to apply. |
 
 ---
 
@@ -130,7 +132,7 @@ Read `access.json` (missing = defaults). Also read `$STATE_DIR/recent-groups.jso
 - Allowed senders: count and list of JIDs
 - Configured groups: list each with its mention setting (`requireMention: true` → "mention-only", `false` → "open") and its `allowFrom` (empty → "any participant can trigger", non-empty → "restricted to: \<list\>")
 - Pending pairings: codes, sender IDs, expiry
-- **Recently dropped groups** (from `recent-groups.json`): for each entry sorted by `last_seen_ts` desc, show the JID, the `last_sender_push_name`, the `drop_count`, and a copy-paste command suggestion: ``/whatsapp:access add-group <jid>``. If the file is empty or missing, omit the section entirely. Cap at the top 10 to keep the listing skimmable.
+- **Recently dropped groups** (from `recent-groups.json`): for each entry sorted by `last_seen_ts` desc, show the JID, the `last_sender_id` (authoritative), the `last_sender_push_name` **explicitly labelled as an unverified display name** (e.g. `unverified name: "<x>"`), the `drop_count`, and a copy-paste command suggestion: ``/whatsapp:access add-group <jid>``. Never present the push name alone as who the sender is — it is user-controlled and spoofable; always pair it with the JID. If the file is empty or missing, omit the section entirely. Cap at the top 10 to keep the listing skimmable.
 
 End with a concrete next step based on state:
 - Recently dropped groups exist: *"Pick one and run the suggested `add-group` command (add `--no-mention` if you want every message in the group to reach Claude instead of only @-mentions)."*
@@ -249,6 +251,22 @@ Then apply:
 3. Append `<jid>` to `ownerJids` (skip if already present).
 4. Save `access.json`.
 5. Confirm. If the user knows the owner also appears under the other JID format (`@lid` vs `@s.whatsapp.net`), suggest running `set-owner` again with that JID so the server recognizes both.
+
+### `dm-mutations [on|off]` — toggle owner-DM access commands
+
+Lets the **owner** run a tiny, owner-authorized set of access commands from a **1:1 WhatsApp DM** (so they don't have to come to the terminal just to accept a group). When ON, the plugin natively handles these `!access` DM commands from the owner — `add-group <jid@g.us>` (mention-only), `remove-group <jid@g.us>`, and `list` — verifying the owner by JID in-process. It is handled entirely by the plugin: the agent/LLM is never in the trust path, and the command never reaches the agent. Widening/policy/ownership commands (`--no-mention`, `group-allow`, `policy`, `pair`, `allow`, `revoke`, `set-owner`, `dm-mutations`) stay terminal-only.
+
+**Two factors are required for the feature to act — this is by design:**
+1. **Out-of-band env var** `WHATSAPP_ALLOW_OWNER_DM_MUTATIONS=1` in the plugin's environment (e.g. the messaging plugin's MCP `env` config). The agent cannot set an env var, so this is the real security boundary.
+2. **This flag** `allowOwnerDmMutations: true` (the convenient runtime toggle this subcommand sets).
+
+If only one is set, the feature stays off. Default is off.
+
+1. If no value given, call `AskUserQuestion` to choose on/off (recommend off unless the user explicitly wants DM-driven group management).
+2. Read `access.json`.
+3. Set `allowOwnerDmMutations` to `true` (on) or `false` (off).
+4. Save `access.json`.
+5. Confirm. If turning ON, remind the user they ALSO need `WHATSAPP_ALLOW_OWNER_DM_MUTATIONS=1` in the plugin env (and a restart) for it to take effect, and that owner-DM commands are limited to `add-group`/`remove-group`/`list`. Warn that anyone who controls the owner's WhatsApp could then issue these — it's a convenience/risk trade-off.
 
 ### `set-scope <chat_jid> <scope>` — configure which chats a chat can read
 

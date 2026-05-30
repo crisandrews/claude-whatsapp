@@ -2,6 +2,28 @@
 
 ## [Unreleased]
 
+## [1.20.0] — 2026-05-30
+
+### Why this release matters
+
+Closes a display-name impersonation vector. WhatsApp push/display names are user-controlled — anyone can set their name to the owner's. Previously the inbound `notifications/claude/channel` meta led with the spoofable `user: pushName` and carried no authoritative owner signal, so an agent could mistake a non-owner (e.g. a group participant who renamed themselves to the owner's name) for the owner and even record that false identity in memory. This release makes inbound identity authoritative and JID-based, de-labels the display name everywhere the agent reads it, closes two same-class governance holes, and adds an opt-in (default-off) way for the verified owner to manage groups from a 1:1 DM — handled natively by the plugin so it never depends on agent reasoning. Pairs with ClawCode 1.7.2.
+
+### Changes
+
+- **Inbound identity is now authoritative and JID-based.** Every `notifications/claude/channel` meta carries `is_owner` (exact JID match against `access.json` `ownerJids`), `is_group`, `user_id` (authoritative JID), `display_name_unverified` (the push name, explicitly marked unverified), and `source` (`user`/`system`). Built by a single `buildChannelMeta` helper so no emitter can drift; `extra` fields can never override the authoritative identity keys. The legacy `user` field is retained for back-compat.
+- **Owner-DM access commands (opt-in, default OFF).** The verified owner can run `!access add-group <jid@g.us>` (mention-only), `!access remove-group <jid@g.us>`, and `!access list` from a 1:1 DM. The plugin parses and applies these natively — the agent/LLM is never in the trust path — after verifying the sender's JID against `ownerJids` in-process. Requires BOTH an out-of-band env var `WHATSAPP_ALLOW_OWNER_DM_MUTATIONS=1` AND the new `access.json` flag `allowOwnerDmMutations` (set via `/whatsapp:access dm-mutations on`). Widening/policy/ownership commands stay terminal-only. The `!access` namespace is reserved: such a DM is always consumed, never forwarded to the agent or indexed.
+
+### Fixes
+
+- Display/push names are de-labeled wherever the agent reads them back: search / list / analytics / message-context tool output and the markdown export now show the authoritative JID with the name marked "unverified" and sanitized against newline/quote/backtick injection. The conversation log and the unknown-group syslog likewise lead with the JID.
+- `create_group` / `join_group` no longer auto-register a new group in OPEN mode — they register MENTION-ONLY, so a freshly created/joined group can't be triggered by any participant without an explicit terminal `--no-mention`.
+- Tool-permission prompts (e.g. "Claude wants to run Bash") are relayed to, and approvable by, the OWNER only — not any allowlisted DM contact — checked against the live owner list at approval time.
+- The agent-facing MCP instructions now state that identity is by JID/`is_owner`, that the display name is spoofable, and that identity equivalences must never be recorded in memory from a chat name.
+
+### Compatibility
+
+- Additive notification fields; existing consumers reading `meta.user` / `meta.user_id` keep working. The new `access.json` field `allowOwnerDmMutations` defaults to false (feature dormant). No MCP tool-signature changes. Owner-DM commands stay off unless BOTH enable factors are set.
+
 ## [1.19.1] — 2026-05-18
 
 ### Why this release matters
