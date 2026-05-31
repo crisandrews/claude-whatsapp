@@ -50,10 +50,10 @@ Primary signal: is the WhatsApp connection up, down, or in-between?
 | `connected` | Linked and online. | — |
 | `reconnecting` | Backing off after a disconnect. | `attempt` (consecutive failures), `nextDelayMs` |
 | `logged_out` | Session terminated from the phone's Linked Devices UI. Needs re-linking. | — |
-| `idle_other_instance` | Another running plugin instance holds the single-instance lock. This MCP server stays up for tool calls but won't connect to WhatsApp. | `holder` (PID) |
+| `idle_other_instance` | Another running plugin instance holds the single-instance lock. This MCP server stays up for tool calls but won't connect to WhatsApp — **inbound messages will NOT reach this session**. | `holder` (PID), `holderStartedAt` (epoch ms or null), `thisPid`, `inboundActive` (`false`), `lockPath`, `remediation` (operator guidance string) — *all since 1.20.1; pre-1.20.1 wrote only `holder`* |
 | `lock_error` | Filesystem error at `<channel-dir>/server.pid`. Check perms / disk. | `error` |
 
-Written atomically with `0600` perms. Readers should tolerate the file being briefly absent (deleted across a restart before the first write).
+Written with `0600` perms. Companion readers (e.g. ClawCode's channel detector) consume by field name and tolerate missing/unknown keys, so the additive `idle_other_instance` fields above are backward-compatible. Readers should also tolerate the file being briefly absent (deleted across a restart before the first write).
 
 ### `access.json`
 

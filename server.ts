@@ -942,8 +942,20 @@ async function connectWhatsApp() {
     let messageId: string
     if (lock.kind === 'contended') {
       syslog(`another instance owns the WhatsApp connection (PID ${lock.existingPid}), staying idle`)
-      writeStatus('idle_other_instance', { holder: lock.existingPid })
-      content = `WhatsApp is being held by another running plugin instance (PID ${lock.existingPid}). This MCP server will stay up and respond to tool calls, but it won't try to connect to WhatsApp until that instance exits. If this is unexpected, close any extra Claude Code sessions in this workspace.`
+      writeStatus('idle_other_instance', {
+        holder: lock.existingPid,
+        // When the holder wrote a PID-first lock (1.20.1+), this is when it took
+        // the lock — lets skills show "held since …". null for legacy locks.
+        holderStartedAt: lock.existingStartedAt ?? null,
+        thisPid: process.pid,
+        // Explicit signal that this session will NOT receive inbound, so the
+        // configure/doctor skills (and ClawCode) can surface it loudly instead
+        // of leaving the agent silently mute. See skills/configure status branch.
+        inboundActive: false,
+        lockPath: PID_FILE,
+        remediation: `Only one Claude Code session can hold WhatsApp at a time. Close the session running as PID ${lock.existingPid} (including any kept alive by a service or scheduled task), then fully relaunch Claude Code with the channel flag. A /reload-plugins is NOT enough to take over the lock. If PID ${lock.existingPid} is already dead, delete the stale lock at ${PID_FILE}.`,
+      })
+      content = `WhatsApp inbound is NOT active in this session: another running plugin instance (PID ${lock.existingPid}) holds the single-device lock, so incoming messages go to that session, not this one. Outbound tool calls and the typing indicator may still appear to work, which is misleading. This MCP server stays up for tool calls but won't connect to WhatsApp until that instance exits. To fix: ensure only one session has WhatsApp loaded, then fully relaunch (a /reload-plugins won't take over the lock). If PID ${lock.existingPid} is dead, the lock at ${PID_FILE} is stale and can be removed.`
       messageId = 'lock-held-' + Date.now()
     } else {
       syslog(`acquireLock failed: ${lock.error}`)

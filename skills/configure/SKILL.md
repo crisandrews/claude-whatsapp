@@ -133,6 +133,16 @@ This is the main setup flow:
    - `qr_error`: Tell user to run `/whatsapp:configure reset` and try again.
    - `logged_out`: Tell user to run `/whatsapp:configure reset`.
    - `reconnecting`: Tell the user "Server is reconnecting to WhatsApp... this is normal after an update. Run `/reload-plugins` once more, then `/whatsapp:configure`. Do NOT run reset — your session is safe."
+   - `idle_other_instance`: **Inbound is NOT active in this session.** Another running server instance owns the single-instance WhatsApp lock (WhatsApp allows only one connected device per credentials), so THIS session receives no inbound messages — even though outbound tool calls and the typing indicator may still appear to work. Read the `holder` field from `status.json` for the PID that holds the lock. Tell the user verbatim, substituting the PID:
+     ```
+     ⚠️ WhatsApp inbound is NOT active in this session. Another plugin instance (PID <holder>) holds the single-device lock, so your incoming messages are being delivered to that session, not this one.
+
+     This usually happens after an in-session update/reload that left a second server running, or when a background/service session is still alive. To fix:
+       1. Make sure only ONE Claude Code session has WhatsApp loaded. Close extra sessions (including any kept alive by a service or scheduled task).
+       2. If you're sure none are running, the lock may be stale — check the PID:  ps -p <holder>  . If it's dead, delete the lock:  rm <STATE_DIR>/server.pid
+       3. Then fully relaunch Claude Code with the channel flag (a `/reload-plugins` is NOT enough to take over the lock).
+     ```
+     Do NOT run `/whatsapp:configure reset` for this — the session/auth are fine; this is a lock-ownership problem, not a link problem.
 
 ### `pair <phone>` — link via pairing code (no QR needed)
 

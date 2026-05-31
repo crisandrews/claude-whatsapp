@@ -2,6 +2,26 @@
 
 ## [Unreleased]
 
+## [1.20.1] — 2026-05-30
+
+### Why this release matters
+
+Makes a "stops responding after an update" failure diagnosable instead of silent. WhatsApp Web allows only one connected device per credentials, so the plugin holds a single-instance lock — but when a second server instance loses that lock (commonly after an in-session `/plugin update` + `/reload-plugins`, or when an older/background/service session is still alive), the locked-out session went `idle_other_instance` and stayed mute: the user saw the "typing…" indicator (the server auto-sends it on every inbound) but never got a reply, with no diagnostic. This release surfaces that state loudly and corrects the update guidance that triggered it.
+
+### Fixes
+
+- **`/whatsapp:configure` now has an `idle_other_instance` branch.** Previously the status flow had no case for it, so a locked-out session looked "weird" to the agent and produced silence. It now tells the user inbound is NOT active, names the PID holding the lock, and gives the fix (get down to one session, then fully relaunch — a `/reload-plugins` does not take over the lock). Explicitly says NOT to run `/whatsapp:configure reset` (this is a lock-ownership problem, not a link problem).
+- **Enriched `idle_other_instance` status.json.** In addition to `holder`, the server now writes `inboundActive: false`, `thisPid`, `lockPath`, `holderStartedAt`, and a `remediation` string, so companion tooling (e.g. ClawCode `/agent:channels`) and the configure skill can surface an actionable message instead of a bare status.
+- **Update flow corrected.** `docs/operations.md` now recommends a full relaunch over `/reload-plugins` for updates (and to stop any background/service/scheduled session first), and `docs/troubleshooting.md` adds a "You see 'typing…' but get no reply" entry mapping the symptom to the multi-instance cause and the single-instance fix.
+
+### Changes
+
+- **Lock file format is now PID-first JSON** (`<pid>\n{"pid","startedAt"}`) via `formatLockContent` / `parseLockFile`. Deliberately back-compatible: older readers (≤1.20.0) that do `parseInt(readFileSync().trim())` still read the correct owner PID from the first line and never mistake a newer lock for a corrupt one — important during the update window when an old and new server may briefly coexist. New readers additionally recover `startedAt` (surfaced as `holderStartedAt` on contention). No behavior change to lock acquisition/contention/reclaim semantics.
+
+### Compatibility
+
+- No MCP tool-signature changes. `status.json` fields are additive. The lock format is forward- and backward-readable across 1.19.x / 1.20.0 / 1.20.1. The deferred "prefer the interactive session when contended" behavior is intentionally NOT included — this release only makes the state observable and the format ready.
+
 ## [1.20.0] — 2026-05-30
 
 ### Why this release matters

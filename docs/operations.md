@@ -104,11 +104,12 @@ Create a scheduled task that runs at login:
 The update path is designed to be non-destructive:
 
 1. `/plugin update` pulls the new version into the plugin cache.
-2. Close Claude Code (`/exit` or Ctrl+C).
-3. Relaunch with the same command you've been using.
+2. **Fully close Claude Code** (`/exit` or Ctrl+C) — and make sure the process actually ends. If you run a background/service session or a scheduled task that keeps Claude alive, stop it too; otherwise an old server keeps holding the single-device WhatsApp lock and the new one can't take over.
+3. Relaunch with the same command you've been using (it must include `--dangerously-load-development-channels plugin:whatsapp@claude-whatsapp`).
 4. **Wait for the "dependencies installed" notification** (~60s the first time after a new release that bumped deps). The plugin writes `status: "deps_missing"` while the install runs and transitions out automatically.
-5. Run `/reload-plugins` — brings the new version cleanly online without needing to fully restart.
-6. Optionally run `/whatsapp:configure` to check the live status.
+5. Optionally run `/whatsapp:configure` to check the live status.
+
+> **Prefer a full relaunch over `/reload-plugins` for updates.** `/reload-plugins` restarts the plugin's MCP server in place, but if an older server instance is still alive (a lingering session, or one kept alive by a service/scheduled task) the two fight over the single-device lock, and the reloaded session can end up `idle_other_instance` — receiving no inbound while still appearing to send fine. A clean exit + relaunch avoids that. If you reloaded and inbound went quiet (you see "typing…" on your phone but get no reply), see [troubleshooting.md → "You see 'typing…' but get no reply"](troubleshooting.md#messages-not-flowing).
 
 **What survives an update** (preserved across all updates):
 
@@ -195,11 +196,14 @@ What this means in practice: **two Claude Code sessions in the same workspace wo
 If you see `idle_other_instance` when you genuinely have only one session open, there's a stale PID file whose holder is still technically alive (zombie, daemonized Node process). Find it:
 
 ```sh
-cat <channel-dir>/server.pid
+head -n1 <channel-dir>/server.pid    # first line is the holder PID
 ps -p <that-pid>
 ```
 
-If the listed PID isn't actually a claude-whatsapp server, stop that process (or reboot), then delete the lock file and relaunch.
+(Since 1.20.1 the lock file is PID-first: the bare PID on line 1, then a JSON
+metadata line. `head -n1` gives you just the PID; the live `holder` PID is also
+in `status.json`.) If the listed PID isn't actually a claude-whatsapp server,
+stop that process (or reboot), then delete the lock file and relaunch.
 
 ---
 
@@ -285,7 +289,7 @@ During reconnect, `<channel-dir>/status.json` holds:
 
 ```sh
 ps ax | grep 'plugin:whatsapp'
-cat <channel-dir>/server.pid
+head -n1 <channel-dir>/server.pid    # first line is the holder PID
 ```
 
 Close the extra one; the survivor reconnects cleanly.

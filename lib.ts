@@ -184,7 +184,7 @@ export function summarizePermissionInput(
 // ---------------------------------------------------------------------------
 export type LockResult =
   | { kind: 'acquired' }
-  | { kind: 'contended'; existingPid: number }
+  | { kind: 'contended'; existingPid: number; existingStartedAt?: number | null }
   | { kind: 'error'; error: string }
 
 export type CreateLockResult =
@@ -192,12 +192,56 @@ export type CreateLockResult =
   | { kind: 'exists' }
   | { kind: 'error'; error: string }
 
+export interface ParsedLock {
+  pid: number | null
+  /** Epoch ms the holder acquired the lock. null for the legacy bare-PID format. */
+  startedAt: number | null
+}
+
+/**
+ * Serialize the lock payload PID-FIRST: the bare owner PID on the first line,
+ * then JSON metadata on the second. This is deliberately back-compatible —
+ * an older reader (≤1.20.0) does `parseInt(readFileSync().trim())`, which reads
+ * the leading integer and ignores the rest, so it still gets the correct owner
+ * PID and never mistakes a newer lock for a "corrupt" one (which would make it
+ * reclaim a lock another live server holds). That matters most during an update
+ * window when an old and new server may briefly coexist. Newer readers
+ * additionally recover `startedAt` from the JSON line via parseLockFile().
+ */
+export function formatLockContent(pid: number, startedAt: number = Date.now()): string {
+  return `${pid}\n${JSON.stringify({ pid, startedAt })}`
+}
+
+/** Tolerant parser: handles both the legacy bare-PID format and the PID-first
+ *  format from formatLockContent(). Never throws. */
+export function parseLockFile(raw: string): ParsedLock {
+  const trimmed = (raw || '').trim()
+  if (!trimmed) return { pid: null, startedAt: null }
+  let pid: number | null = null
+  let startedAt: number | null = null
+  // Leading integer covers both bare-PID (old) and PID-first (new) formats.
+  const lead = parseInt(trimmed, 10)
+  if (!Number.isNaN(lead) && lead > 0) pid = lead
+  // Recover JSON metadata if present (new format, or a pure-JSON defensive case).
+  const brace = trimmed.indexOf('{')
+  if (brace >= 0) {
+    try {
+      const meta = JSON.parse(trimmed.slice(brace))
+      if (pid === null && typeof meta.pid === 'number' && meta.pid > 0) pid = meta.pid
+      if (typeof meta.startedAt === 'number' && meta.startedAt > 0) startedAt = meta.startedAt
+    } catch {
+      // Metadata unreadable — the leading PID (if any) still stands.
+    }
+  }
+  return { pid, startedAt }
+}
+
 export function tryCreateLockFile(lockPath: string, ownerPid: number): CreateLockResult {
   try {
     // 'wx' = O_CREAT | O_EXCL on POSIX — atomic create-or-fail.
     const fd = fs.openSync(lockPath, 'wx')
     try {
-      fs.writeSync(fd, String(ownerPid))
+      fs.writeSync(fd, formatLockContent(ownerPid))
     } finally {
       fs.closeSync(fd)
     }
@@ -248,10 +292,11 @@ export function acquireLock(opts: AcquireLockOptions): LockResult {
 
   // Lock exists — inspect.
   let existingPid: number | null = null
+  let existingStartedAt: number | null = null
   try {
-    const raw = fs.readFileSync(lockPath, 'utf8').trim()
-    const parsed = parseInt(raw, 10)
-    if (!isNaN(parsed) && parsed > 0) existingPid = parsed
+    const parsed = parseLockFile(fs.readFileSync(lockPath, 'utf8'))
+    existingPid = parsed.pid
+    existingStartedAt = parsed.startedAt
   } catch {
     // Unreadable — treat as corrupt below.
   }
@@ -264,9 +309,10 @@ export function acquireLock(opts: AcquireLockOptions): LockResult {
     if (second.kind === 'error') return { kind: 'error', error: second.error }
     // Race: another process grabbed it. Try to give a useful answer.
     try {
-      const raw = fs.readFileSync(lockPath, 'utf8').trim()
-      const pid = parseInt(raw, 10)
-      if (!isNaN(pid) && pid > 0) return { kind: 'contended', existingPid: pid }
+      const parsed = parseLockFile(fs.readFileSync(lockPath, 'utf8'))
+      if (parsed.pid !== null) {
+        return { kind: 'contended', existingPid: parsed.pid, existingStartedAt: parsed.startedAt }
+      }
     } catch {}
     return { kind: 'error', error: `lock contended after ${reason} recovery` }
   }
@@ -281,7 +327,7 @@ export function acquireLock(opts: AcquireLockOptions): LockResult {
     return reclaim('self-lock')
   }
 
-  if (isAlive(existingPid)) return { kind: 'contended', existingPid }
+  if (isAlive(existingPid)) return { kind: 'contended', existingPid, existingStartedAt }
 
   log(`stale lock found (PID ${existingPid} no longer alive), reclaiming`)
   return reclaim('stale-pid')

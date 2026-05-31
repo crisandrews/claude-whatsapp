@@ -92,6 +92,30 @@ Ensure your user owns the directory and has write perms; check for disk-space ex
 
 ## Messages not flowing
 
+### You see "typing…" but get no reply (often right after an update or `/reload-plugins`)
+
+**What it means.** The server received your message — that's why the typing indicator fires (the plugin auto-sends `composing` on every inbound, before the agent is involved) — but the message was never delivered to a live Claude Code session, so nothing answers. Outbound (the agent's own sends) can still appear to work, which makes this confusing.
+
+The usual cause is **more than one server instance running against the same WhatsApp credentials**. WhatsApp Web allows only one connected device per login, so two servers kick each other in a loop and inbound delivery becomes unreliable. This is easy to trigger during an in-session update: `/plugin update` reinstalls dependencies and the bootstrap re-launches the server, and if an older session (or a background/service session, e.g. one kept alive by a scheduled task) is still running, you briefly have two. One session wins the single-instance lock and receives inbound; the others go `idle_other_instance` and stay silent.
+
+**How to confirm.**
+```sh
+cat <channel-dir>/status.json          # idle_other_instance + "holder": <pid> on a locked-out session
+grep "connection closed" <channel-dir>/logs/system.log | tail   # steady-cadence reconnects = two instances fighting
+ps -eo pid,command | grep "[s]erver.ts"   # how many whatsapp server processes are alive
+```
+
+**Fix.**
+1. Get down to **one** session that has WhatsApp loaded. Fully exit the extras — including any kept alive by `/agent:service` or a scheduled task; on those, `/exit` alone may not end the process. Verify none remain with the `ps` line above.
+2. If you're sure only one session is left but the lock is still held, the PID file may be stale: check `ps -p <holder>` (the PID from `status.json`); if it's dead, `rm <channel-dir>/server.pid`.
+3. **Fully relaunch** Claude Code with the channel flag — `/reload-plugins` restarts the plugin's MCP server but does not reliably re-take a lock another instance is holding, so prefer a clean relaunch when inbound is stuck:
+   ```sh
+   claude --dangerously-load-development-channels plugin:whatsapp@claude-whatsapp --dangerously-skip-permissions
+   ```
+4. Send yourself a test message. It should arrive immediately.
+
+Your `auth/`, `access.json`, `config.json`, and `messages.db` are untouched by all of this — do **not** run `/whatsapp:configure reset`; this is a lock-ownership problem, not a link problem.
+
 ### Messages from a DM contact drop even though they're paired
 
 **What it means.** Most likely `dmPolicy: "disabled"` is set (hard kill-switch), or the contact was revoked after pairing.
