@@ -37,7 +37,7 @@ export interface BuildChannelMetaOptions {
   extra?: Record<string, unknown>
 }
 
-export function buildChannelMeta(opts: BuildChannelMetaOptions): Record<string, unknown> {
+export function buildChannelMeta(opts: BuildChannelMetaOptions): Record<string, string> {
   const source = opts.source ?? 'user'
   const isGroup = opts.isGroup ?? opts.chatId.endsWith('@g.us')
   const isOwner =
@@ -45,29 +45,47 @@ export function buildChannelMeta(opts: BuildChannelMetaOptions): Record<string, 
       ? false
       : !!opts.access && opts.access.ownerJids.includes(opts.senderId)
 
+  // The host validates params.meta as Record<string,string> (Zod). ANY non-string
+  // value (boolean, number, null, object) makes the host reject the ENTIRE
+  // notification with a ZodError and silently drop the inbound — the message
+  // never reaches the agent. So every value emitted here MUST be a string, and
+  // we coerce defensively so no current or future field can re-break delivery.
+  const toMetaString = (value: unknown): string | undefined => {
+    if (value == null) return undefined
+    if (typeof value === 'object' || typeof value === 'function') return undefined
+    return String(value)
+  }
+
   // Merge extra FIRST, with reserved identity keys stripped, so the
-  // authoritative fields below always win.
-  const safeExtra: Record<string, unknown> = {}
+  // authoritative fields below always win. Coerce every extra value to a string
+  // (drop null/undefined/objects) — attachment metadata must not smuggle a
+  // non-string value into the notification.
+  const safeExtra: Record<string, string> = {}
   if (opts.extra) {
     for (const [k, v] of Object.entries(opts.extra)) {
-      if (!RESERVED_META_KEYS.has(k)) safeExtra[k] = v
+      if (RESERVED_META_KEYS.has(k)) continue
+      const coerced = toMetaString(v)
+      if (coerced !== undefined) safeExtra[k] = coerced
     }
   }
 
-  const meta: Record<string, unknown> = {
+  const meta: Record<string, string> = {
     ...safeExtra,
     chat_id: opts.chatId,
     message_id: opts.messageId,
     user_id: opts.senderId, // authoritative JID
     // Legacy field, kept for back-compat. UNVERIFIED display name — not identity.
     user: source === 'system' ? opts.senderId : (opts.pushName ?? opts.senderId),
-    is_group: isGroup,
-    is_owner: isOwner, // authoritative — exact JID match against ownerJids
+    // Emitted as the STRINGS "true"/"false": the host's Record<string,string>
+    // validator rejects raw booleans. The agent reads these as text attributes
+    // (is_owner="true"), so string form is semantically correct.
+    is_group: String(isGroup),
+    is_owner: String(isOwner), // authoritative — exact JID match against ownerJids
     ts: opts.ts,
     source,
   }
   if (source !== 'system') {
-    meta.display_name_unverified = opts.pushName ?? null
+    meta.display_name_unverified = opts.pushName ?? ''
   }
   if (opts.envelopeToken) meta.requestEnvelopeToken = opts.envelopeToken
   return meta

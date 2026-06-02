@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [1.20.2] — 2026-06-01
+
+### Why this release matters
+
+Fixes a total inbound outage introduced in 1.20.0: the agent never sees incoming WhatsApp messages. The host (Claude Code) validates a channel notification's `params.meta` as `Record<string,string>` — every value must be a string. The 1.20.0 identity refactor began emitting `is_group` and `is_owner` as **booleans** (and `display_name_unverified` as **null** when there's no push name). The host rejects the whole notification with a `ZodError` and silently drops it, so the message is logged server-side and the "typing…" indicator fires, but nothing ever reaches the agent. This affected every 1.20.0/1.20.1 install. Diagnosed from the host debug log: `meta.is_group / meta.is_owner — expected string, received boolean`.
+
+### Fixes
+
+- channel-meta: `buildChannelMeta` now emits every `meta` value as a string — `is_group`/`is_owner` as `"true"`/`"false"`, `display_name_unverified` as `""` (never null), and a defensive coercer stringifies/drops any non-string value from `extra` (attachment metadata) so no current or future field can re-trip the host's `Record<string,string>` validator. The agent reads these as text attributes (`is_owner="true"`), so semantics are unchanged. Return type narrowed to `Record<string,string>`.
+
 ## [1.20.1] — 2026-05-30
 
 ### Why this release matters
