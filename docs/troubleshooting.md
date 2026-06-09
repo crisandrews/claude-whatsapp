@@ -107,8 +107,8 @@ ps -eo pid,command | grep "[s]erver.ts"   # how many whatsapp server processes a
 
 **Fix.**
 1. Get down to **one** session that has WhatsApp loaded. Fully exit the extras — including any kept alive by `/agent:service` or a scheduled task; on those, `/exit` alone may not end the process. Verify none remain with the `ps` line above.
-2. If you're sure only one session is left but the lock is still held, the PID file may be stale: check `ps -p <holder>` (the PID from `status.json`); if it's dead, `rm <channel-dir>/server.pid`.
-3. **Fully relaunch** Claude Code with the channel flag — `/reload-plugins` restarts the plugin's MCP server but does not reliably re-take a lock another instance is holding, so prefer a clean relaunch when inbound is stuck:
+2. Since 1.21.0 that's all you need: the session you kept polls the lock every 10 seconds and takes over automatically within ~15 seconds of the other instance exiting (you'll get a "WhatsApp connected" message). A genuinely stale lock (dead holder PID) is reclaimed by the same poll — no manual `rm` needed.
+3. On plugin versions before 1.21.0 the waiting session stays idle forever: there, after closing the extras (and `rm <channel-dir>/server.pid` if `ps -p <holder>` shows the PID is dead), **fully relaunch** Claude Code with the channel flag — `/reload-plugins` does not re-take the lock:
    ```sh
    claude --dangerously-load-development-channels plugin:whatsapp@claude-whatsapp --dangerously-skip-permissions
    ```

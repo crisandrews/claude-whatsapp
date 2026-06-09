@@ -48,10 +48,11 @@ Primary signal: is the WhatsApp connection up, down, or in-between?
 | `qr_ready` | Ready to link. QR is at `<channel-dir>/qr.png`; pairing-code flow may be active. | `qrPath`, optionally `pairingCode`, `pairingPhone` |
 | `qr_error` | QR rendering failed (disk / permission). Safe to retry. | — |
 | `connected` | Linked and online. | — |
-| `reconnecting` | Backing off after a disconnect. | `attempt` (consecutive failures), `nextDelayMs` |
-| `logged_out` | Session terminated from the phone's Linked Devices UI. Needs re-linking. | — |
-| `idle_other_instance` | Another running plugin instance holds the single-instance lock. This MCP server stays up for tool calls but won't connect to WhatsApp — **inbound messages will NOT reach this session**. | `holder` (PID), `holderStartedAt` (epoch ms or null), `thisPid`, `inboundActive` (`false`), `lockPath`, `remediation` (operator guidance string) — *all since 1.20.1; pre-1.20.1 wrote only `holder`* |
-| `lock_error` | Filesystem error at `<channel-dir>/server.pid`. Check perms / disk. | `error` |
+| `reconnecting` | Backing off after a disconnect. | `attempt` (consecutive failures), `nextDelayMs`, optionally `lastDisconnectCode` (numeric Baileys status of the close, e.g. `440` for a creds fight — *since 1.21.0*) |
+| `logged_out` | Session terminated from the phone's Linked Devices UI. Needs re-linking. Since 1.21.0 the holder also releases the single-instance lock on logout, so a waiting session can take over. | — |
+| `idle_other_instance` | Another running plugin instance holds the single-instance lock. This MCP server stays up for tool calls but won't connect to WhatsApp — **inbound messages will NOT reach this session**. Since 1.21.0 the session polls the lock and takes over automatically once the holder exits (status flips to the normal link/connect sequence). | `holder` (PID), `holderStartedAt` (epoch ms or null), `thisPid`, `inboundActive` (`false`), `lockPath`, `remediation` (operator guidance string) — *all since 1.20.1; pre-1.20.1 wrote only `holder`* — plus `takeoverPollMs` (*since 1.21.0*) |
+| `lock_error` | Filesystem error at `<channel-dir>/server.pid`. Check perms / disk. The session keeps retrying every 10 s (*since 1.21.0; previously terminal*). | `error` |
+| `connect_error` | The WhatsApp side could not start after acquiring the lock (e.g. corrupt/unreadable auth state). The lock is handed back and the session retries every 10 s. *Since 1.21.0.* | `error` |
 
 Written with `0600` perms. Companion readers (e.g. ClawCode's channel detector) consume by field name and tolerate missing/unknown keys, so the additive `idle_other_instance` fields above are backward-compatible. Readers should also tolerate the file being briefly absent (deleted across a restart before the first write).
 

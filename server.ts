@@ -931,17 +931,78 @@ const RECONNECT_BASE_DELAY_MS = 2_000        // first retry ~2s
 const RECONNECT_MAX_DELAY_MS = 5 * 60_000    // cap at 5 min
 const RECONNECT_STABLE_THRESHOLD_MS = 30_000 // counted as "real" if open this long
 
+// Single-instance takeover state — see the contended branch in connectWhatsApp.
+// The losing instance no longer stays idle forever: it polls the lock and takes
+// over once the holder exits. The holder's PPID watchdog + exit grace release
+// the lock within ~10s of its session dying, so a 10s poll picks it up promptly
+// without busy-waiting (each attempt is one O_EXCL create + one kill(pid, 0)).
+const TAKEOVER_POLL_MS = 10_000
+let lockHeldAnnounced = false
+// Single-flight handle for the poll chain: at most one pending retry timer,
+// cleared the moment the lock is acquired so a stray tick can never open a
+// second socket on the same creds. Cooperates with `shuttingDown` so a poll
+// can't re-acquire the lock during the exit grace and die holding it.
+let takeoverTimer: ReturnType<typeof setTimeout> | null = null
+// Re-entrancy guard: connectWhatsApp is invoked from the takeover poll, the
+// reconnect timer, the deps poll and main(); two interleaved runs would each
+// pass the self-lock reclaim and open duplicate sockets.
+let connectInFlight = false
+// 440 (connection replaced) notifications are rate-limited rather than
+// once-per-flag: in a sustained creds fight the winning side's tenures count
+// as "stable", so a reset-on-stable flag would re-announce every backoff
+// cycle (~5 min). One notice when first detected, then at most one every 6h
+// while the fight persists.
+const CONFLICT_440_REANNOUNCE_MS = 6 * 60 * 60_000
+let lastConflict440AnnouncedAt = 0
+
+function scheduleTakeoverRetry() {
+  if (shuttingDown) return
+  if (takeoverTimer) clearTimeout(takeoverTimer)
+  takeoverTimer = setTimeout(() => {
+    takeoverTimer = null
+    // Rejections must never bubble out of a timer (the global handler only
+    // syslogs and the chain would die) — and connectWhatsApp itself now
+    // reschedules on every non-terminal failure, so this catch is the last
+    // resort, not the recovery path.
+    connectWhatsApp().catch((err) => syslog(`takeover attempt failed: ${err}`))
+  }, TAKEOVER_POLL_MS)
+}
+
 function writeStatus(status: string, details?: Record<string, any>) {
-  fs.writeFileSync(STATUS_FILE, JSON.stringify({ status, ...details, ts: Date.now() }), { mode: 0o600 })
+  // Best-effort: a failed status write (disk full, permissions) must never
+  // take the server down — Claude Code does not restart a crashed MCP server,
+  // and writeStatus runs inside the takeover poll and reconnect paths.
+  try {
+    fs.writeFileSync(STATUS_FILE, JSON.stringify({ status, ...details, ts: Date.now() }), { mode: 0o600 })
+  } catch (err) {
+    try { syslog(`writeStatus(${status}) failed: ${err}`) } catch {}
+  }
 }
 
 async function connectWhatsApp() {
+  // Re-entrancy guard: callers are the takeover poll, the reconnect timer,
+  // the deps poll and main(). Two interleaved runs would both pass the
+  // self-lock reclaim and open duplicate sockets on the same creds. The
+  // in-flight call owns the continuation (every non-terminal path below
+  // reschedules), so skipping here is always safe.
+  if (connectInFlight) {
+    syslog('connectWhatsApp re-entered while an attempt is in flight, skipping')
+    return
+  }
+  connectInFlight = true
+  try {
+    await connectWhatsAppInner()
+  } finally {
+    connectInFlight = false
+  }
+}
+
+async function connectWhatsAppInner() {
   const lock = acquireLock()
   if (lock.kind !== 'acquired') {
-    let content: string
-    let messageId: string
+    let content: string | null = null
+    let messageId = ''
     if (lock.kind === 'contended') {
-      syslog(`another instance owns the WhatsApp connection (PID ${lock.existingPid}), staying idle`)
       writeStatus('idle_other_instance', {
         holder: lock.existingPid,
         // When the holder wrote a PID-first lock (1.20.1+), this is when it took
@@ -953,39 +1014,82 @@ async function connectWhatsApp() {
         // of leaving the agent silently mute. See skills/configure status branch.
         inboundActive: false,
         lockPath: PID_FILE,
-        remediation: `Only one Claude Code session can hold WhatsApp at a time. Close the session running as PID ${lock.existingPid} (including any kept alive by a service or scheduled task), then fully relaunch Claude Code with the channel flag. A /reload-plugins is NOT enough to take over the lock. If PID ${lock.existingPid} is already dead, delete the stale lock at ${PID_FILE}.`,
+        // Additive since 1.21.0: this session keeps polling and takes over by
+        // itself — remediation no longer asks for a full relaunch.
+        takeoverPollMs: TAKEOVER_POLL_MS,
+        remediation: `Only one Claude Code session can hold WhatsApp at a time. This session checks every ${TAKEOVER_POLL_MS / 1000}s and takes over automatically as soon as PID ${lock.existingPid} exits (or its lock goes stale). To hand over now, close the session running as PID ${lock.existingPid} — including any kept alive by a service or scheduled task. No relaunch of this session is needed.`,
       })
-      content = `WhatsApp inbound is NOT active in this session: another running plugin instance (PID ${lock.existingPid}) holds the single-device lock, so incoming messages go to that session, not this one. Outbound tool calls and the typing indicator may still appear to work, which is misleading. This MCP server stays up for tool calls but won't connect to WhatsApp until that instance exits. To fix: ensure only one session has WhatsApp loaded, then fully relaunch (a /reload-plugins won't take over the lock). If PID ${lock.existingPid} is dead, the lock at ${PID_FILE} is stale and can be removed.`
-      messageId = 'lock-held-' + Date.now()
+      // Announce once per contention episode — the poll below re-enters this
+      // branch every TAKEOVER_POLL_MS while the holder lives, and a fresh
+      // channel notification (or syslog line) every 10s would flood the
+      // session and the log.
+      if (!lockHeldAnnounced) {
+        lockHeldAnnounced = true
+        syslog(`another instance owns the WhatsApp connection (PID ${lock.existingPid}), waiting to take over (poll every ${TAKEOVER_POLL_MS / 1000}s)`)
+        content = `WhatsApp inbound is NOT active in this session: another running plugin instance (PID ${lock.existingPid}) holds the single-device lock, so incoming messages go to that session, not this one. Outbound tool calls and the typing indicator may still appear to work, which is misleading. This session checks every ${TAKEOVER_POLL_MS / 1000} seconds and will take over automatically once that instance exits — closing the other session is enough, no relaunch needed here. You'll get a "WhatsApp connected" message when the takeover completes.`
+        messageId = 'lock-held-' + Date.now()
+      }
     } else {
-      syslog(`acquireLock failed: ${lock.error}`)
       writeStatus('lock_error', { error: lock.error })
-      content = `WhatsApp lock could not be acquired due to a filesystem error: ${lock.error}. The MCP server will stay up but won't connect to WhatsApp. Verify permissions and free space at ${PID_FILE}.`
-      messageId = 'lock-error-' + Date.now()
+      if (!lockHeldAnnounced) {
+        lockHeldAnnounced = true
+        syslog(`acquireLock failed: ${lock.error}`)
+        content = `WhatsApp lock could not be acquired due to a filesystem error: ${lock.error}. The MCP server stays up and keeps retrying every ${TAKEOVER_POLL_MS / 1000} seconds. Verify permissions and free space at ${PID_FILE}.`
+        messageId = 'lock-error-' + Date.now()
+      }
     }
-    try {
-      mcp.notification({
-        method: 'notifications/claude/channel',
-        params: {
-          content,
-          meta: buildChannelMeta({
-            chatId: 'system', messageId, senderId: 'system',
-            ts: new Date().toISOString(), source: 'system',
-          }),
-        },
-      })
-    } catch {}
+    if (content) {
+      try {
+        mcp.notification({
+          method: 'notifications/claude/channel',
+          params: {
+            content,
+            meta: buildChannelMeta({
+              chatId: 'system', messageId, senderId: 'system',
+              ts: new Date().toISOString(), source: 'system',
+            }),
+          },
+        })
+      } catch {}
+    }
+    // BOTH arms keep polling. A transient filesystem error must not end the
+    // chain (one EACCES/ENOSPC blip would otherwise revert this session to
+    // the pre-1.21 idle-forever behavior), and the holder's exit — or a
+    // stale/dead PID — is reclaimed by acquireLock on a later attempt.
+    scheduleTakeoverRetry()
     return
   }
 
-  const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR)
+  // Lock acquired — cancel any pending poll tick so a stray timer can never
+  // re-enter and open a second socket, and reset the announce gate: if this
+  // session later loses the lock again, the new episode should announce.
+  if (takeoverTimer) { clearTimeout(takeoverTimer); takeoverTimer = null }
+  lockHeldAnnounced = false
 
-  sock = makeWASocket({
-    auth: state,
-    printQRInTerminal: false, // stdout is MCP transport, cannot print there
-    browser: ['Claude WhatsApp', 'Chrome', '126.0.0'] as any,
-    logger,
-  })
+  let state: any
+  let saveCreds: any
+  try {
+    const auth = await useMultiFileAuthState(AUTH_DIR)
+    state = auth.state
+    saveCreds = auth.saveCreds
+    sock = makeWASocket({
+      auth: state,
+      printQRInTerminal: false, // stdout is MCP transport, cannot print there
+      browser: ['Claude WhatsApp', 'Chrome', '126.0.0'] as any,
+      logger,
+    })
+  } catch (err) {
+    // Corrupt or unreadable auth state — e.g. a holder that crashed mid-write,
+    // which is exactly the situation takeover handles. Never wedge HOLDING the
+    // lock with no socket: hand the lock back, surface a dedicated status
+    // (connect_error — lock_error would misdirect the user at the PID file),
+    // and keep the retry chain alive.
+    syslog(`whatsapp connect failed after lock acquire: ${err}`)
+    try { releaseLock() } catch {}
+    writeStatus('connect_error', { error: String(err) })
+    scheduleTakeoverRetry()
+    return
+  }
 
   // Per-chat outbound throttle. Wraps sock.sendMessage so any tool that calls
   // it (reply, react, send_*, edit, delete, forward, ...) is automatically
@@ -1095,16 +1199,69 @@ async function connectWhatsApp() {
         const wasStable = lastConnectedAt > 0 && (Date.now() - lastConnectedAt) >= RECONNECT_STABLE_THRESHOLD_MS
         if (wasStable) consecutiveFailures = 0
         consecutiveFailures++
+
+        // Dedicated surfacing for status 440 (connectionReplaced): another
+        // client logged in with the SAME credentials took the socket —
+        // typically a second workspace sharing copied auth state, or another
+        // bridge linked as the same device. The jittered backoff below already
+        // de-synchronizes the fight so one side eventually wins; what was
+        // missing was telling the user it's happening (previously: silent
+        // flapping, visible only in system.log). Rate-limited by timestamp,
+        // NOT a reset-on-stable flag: in a sustained fight the winner's
+        // tenures count as stable, so a flag would re-announce every backoff
+        // cycle (~5 min).
+        if (statusCode === DisconnectReason.connectionReplaced
+            && Date.now() - lastConflict440AnnouncedAt >= CONFLICT_440_REANNOUNCE_MS) {
+          lastConflict440AnnouncedAt = Date.now()
+          try {
+            mcp.notification({
+              method: 'notifications/claude/channel',
+              params: {
+                content: `WhatsApp connection was taken over by another client using this same account (status 440 — connection replaced). If two sessions or workspaces share the same WhatsApp credentials, they will keep kicking each other off: close one of them. Reconnecting with backoff; this resolves on its own once only one client remains. (You'll be reminded at most every 6 hours while this persists.)`,
+                meta: buildChannelMeta({
+                  chatId: 'system', messageId: 'conflict-440-' + Date.now(), senderId: 'system',
+                  ts: new Date().toISOString(), source: 'system',
+                }),
+              },
+            })
+          } catch {}
+        }
+
         const exp = RECONNECT_BASE_DELAY_MS * Math.pow(2, Math.min(consecutiveFailures - 1, 8))
         const jitter = (Math.random() - 0.5) * exp * 0.6 // ±30%
         const delay = Math.min(RECONNECT_MAX_DELAY_MS, Math.max(RECONNECT_BASE_DELAY_MS, exp + jitter))
-        writeStatus('reconnecting', { attempt: consecutiveFailures, nextDelayMs: Math.round(delay) })
+        writeStatus('reconnecting', {
+          attempt: consecutiveFailures,
+          nextDelayMs: Math.round(delay),
+          // Additive since 1.21.0: lets doctor/companions distinguish a 440
+          // creds fight from plain network flapping without parsing syslog.
+          ...(typeof statusCode === 'number' ? { lastDisconnectCode: statusCode } : {}),
+        })
         syslog(`connection closed (status ${statusCode}), retry #${consecutiveFailures} in ${Math.round(delay / 1000)}s`)
-        setTimeout(() => connectWhatsApp(), delay)
+        setTimeout(() => {
+          connectWhatsApp().catch((err) => syslog(`reconnect attempt failed: ${err}`))
+        }, delay)
       } else {
         writeStatus('logged_out')
-        fs.rmSync(AUTH_DIR, { recursive: true, force: true })
-        fs.mkdirSync(AUTH_DIR, { recursive: true })
+        // Wipe the dead auth state FIRST, then release the single-instance
+        // lock. Order matters: a waiting session polls every 10s and acquires
+        // the instant the lock clears — releasing before the wipe would let
+        // it read (or re-register into) a directory this process is deleting
+        // concurrently. The wipe is guarded so a filesystem error can't skip
+        // the lock release or the announce-flag resets below.
+        try {
+          fs.rmSync(AUTH_DIR, { recursive: true, force: true })
+          fs.mkdirSync(AUTH_DIR, { recursive: true })
+        } catch (err) {
+          syslog(`auth wipe after logout failed: ${err}`)
+        }
+        // Release the lock: a logged-out holder never reconnects on its own
+        // (re-linking happens via /whatsapp:configure), so keeping the lock
+        // would leave a waiting session polling forever behind a holder that
+        // can never serve inbound again. The taker will find wiped creds and
+        // surface the normal QR/link flow. If this session later re-links,
+        // connectWhatsApp simply re-acquires — or waits its turn.
+        try { releaseLock() } catch {}
         // Re-pairing → next 'open' is a genuinely new session, re-announce.
         firstConnectAnnounced = false
         qrReadyAnnounced = false
@@ -4837,6 +4994,10 @@ let shuttingDown = false
 function shutdown() {
   if (shuttingDown) return
   shuttingDown = true
+  // Cancel any pending takeover poll: a tick firing inside the exit grace
+  // could re-acquire the just-released lock and die holding it (the next
+  // instance would burn one stale-reclaim cycle on the dead PID).
+  if (takeoverTimer) { clearTimeout(takeoverTimer); takeoverTimer = null }
   for (const key of Array.from(pendingInbound.keys())) flushInbound(key)
   releaseLock()
   closeDb()
@@ -4877,27 +5038,46 @@ async function main() {
   if (!ready) {
     // Deps not installed yet — write status so the skill knows to install them
     writeStatus('deps_missing')
-    mcp.notification({
-      method: 'notifications/claude/channel',
-      params: {
-        content: 'WhatsApp dependencies are not installed yet. Run /whatsapp:configure to set up.',
-        meta: buildChannelMeta({
-          chatId: 'system', messageId: 'deps-' + Date.now(), senderId: 'system',
-          ts: new Date().toISOString(), source: 'system',
-        }),
-      },
-    })
+    try {
+      mcp.notification({
+        method: 'notifications/claude/channel',
+        params: {
+          content: 'WhatsApp dependencies are not installed yet. Run /whatsapp:configure to set up.',
+          meta: buildChannelMeta({
+            chatId: 'system', messageId: 'deps-' + Date.now(), senderId: 'system',
+            ts: new Date().toISOString(), source: 'system',
+          }),
+        },
+      })
+    } catch {}
 
-    // Poll for deps every 10s (skill may install them)
+    // Poll for deps every 10s (skill may install them). The busy guard keeps
+    // a slow first loadDeps (>10s: cold npm cache, slow disk) from letting two
+    // ticks both pass the check and double-initialize everything, including
+    // two parallel connectWhatsApp calls.
+    let depTickBusy = false
     const depCheck = setInterval(async () => {
-      if (await loadDeps()) {
-        clearInterval(depCheck)
-        logger = pino({ level: 'silent' })
-        await initDb(MESSAGES_DB_PATH)
-        watchApproved()
-        watchConfig()
-        initTranscriber().catch(() => {})
-        await connectWhatsApp()
+      if (depTickBusy) return
+      depTickBusy = true
+      try {
+        if (await loadDeps()) {
+          clearInterval(depCheck)
+          logger = pino({ level: 'silent' })
+          await initDb(MESSAGES_DB_PATH)
+          watchApproved()
+          watchConfig()
+          initTranscriber().catch(() => {})
+          try {
+            await connectWhatsApp()
+          } catch (err) {
+            // Keep the MCP server alive for tool calls/status even when the
+            // first connect attempt fails (the host won't restart us).
+            syslog(`initial connectWhatsApp failed (post-deps): ${err}`)
+            writeStatus('connect_error', { error: String(err) })
+          }
+        }
+      } finally {
+        depTickBusy = false
       }
     }, 10_000)
     return
@@ -4919,8 +5099,16 @@ async function main() {
   watchApproved()
   watchConfig()
 
-  // Start WhatsApp connection
-  await connectWhatsApp()
+  // Start WhatsApp connection. A rejection here must NOT fall through to
+  // main().catch (which exits the process): the MCP server has to stay up
+  // for tool calls and status surfacing even when the WhatsApp side cannot
+  // start — same never-crash contract as the reconnect and takeover paths.
+  try {
+    await connectWhatsApp()
+  } catch (err) {
+    syslog(`initial connectWhatsApp failed: ${err}`)
+    writeStatus('connect_error', { error: String(err) })
+  }
 }
 
 main().catch((err) => {

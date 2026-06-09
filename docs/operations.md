@@ -187,13 +187,15 @@ On startup, the plugin tries to atomically create that file with its own PID. Th
 | Outcome | Status | Effect |
 |---|---|---|
 | Created cleanly | `connected` (after link) | Normal. |
-| File exists, PID is alive | `idle_other_instance` | MCP server stays up for tool calls, but the WhatsApp connection is skipped. Tool calls return errors like "WhatsApp is not connected". |
+| File exists, PID is alive | `idle_other_instance` | MCP server stays up for tool calls, but the WhatsApp connection is skipped. Tool calls return errors like "WhatsApp is not connected". Since 1.21.0 the session keeps polling the lock every 10 seconds and **takes over automatically** as soon as the holder exits. |
 | File exists, PID is stale | reclaims the lock | A previous crash; the plugin re-grabs the lock and proceeds. |
 | File exists but unreadable/corrupt | reclaims the lock | Best-effort recovery. |
 
-What this means in practice: **two Claude Code sessions in the same workspace won't fight over WhatsApp**. The second session sees `idle_other_instance` and stays idle. Close the extra session, or wait for the holder to exit — the lock is released on graceful shutdown (`SIGTERM`, stdin close) and on a parent-process-death detection (PPID-change watchdog that fires every 5 seconds).
+What this means in practice: **two Claude Code sessions in the same workspace won't fight over WhatsApp**. The second session sees `idle_other_instance` and waits. Close the extra session and the waiting one connects by itself within ~15 seconds — the lock is released on graceful shutdown (`SIGTERM`, stdin close) and on parent-process-death detection (PPID-change watchdog that fires every 5 seconds), and the waiting session's 10-second poll picks it up right after. You'll get the normal "WhatsApp connected" message when the takeover completes. (Before 1.21.0 the waiting session stayed idle forever and needed a full relaunch after the holder closed.)
 
-If you see `idle_other_instance` when you genuinely have only one session open, there's a stale PID file whose holder is still technically alive (zombie, daemonized Node process). Find it:
+The lock also releases on `logged_out` (since 1.21.0): a holder whose session was unlinked from the phone can never serve inbound again, so it hands the lock to any waiting session instead of blocking it. Note the taker finds wiped credentials (logout destroys them by design), so the surviving session surfaces the normal QR / pairing flow — re-link there.
+
+If you see `idle_other_instance` when you genuinely have only one session open, the holder PID is still technically alive (zombie, daemonized Node process) — a genuinely *stale* lock (dead PID) is reclaimed automatically by the poll. Find the holder:
 
 ```sh
 head -n1 <channel-dir>/server.pid    # first line is the holder PID
@@ -203,7 +205,9 @@ ps -p <that-pid>
 (Since 1.20.1 the lock file is PID-first: the bare PID on line 1, then a JSON
 metadata line. `head -n1` gives you just the PID; the live `holder` PID is also
 in `status.json`.) If the listed PID isn't actually a claude-whatsapp server,
-stop that process (or reboot), then delete the lock file and relaunch.
+stop that process (or reboot) — the waiting session takes over on its next poll.
+
+When two instances **can't** see each other's lock (two different channel dirs sharing copied credentials, or another bridge linked as the same device), the 440 kick-fight can still happen. Since 1.21.0 the losing side posts a channel notification naming status 440 and the likely cause (once per episode), and `status.json` exposes `lastDisconnectCode` while reconnecting, so the fight is visible instead of silent.
 
 ---
 

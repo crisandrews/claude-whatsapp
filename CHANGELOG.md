@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+## [1.21.0] — 2026-06-09
+
+### Why this release matters
+
+Until now, losing the single-instance lock was a dead end: the second session announced `idle_other_instance` once and then sat idle forever, even after the holding session exited — the natural habit of opening a new Claude Code session before closing the old one permanently muted WhatsApp until a full relaunch (the takeover was explicitly deferred in 1.20.1). This release closes that gap: the waiting session now polls the lock and takes over by itself, a logged-out holder hands the lock over instead of blocking it, and the one remaining invisible failure mode — two clients fighting over the same credentials (status 440) — now announces itself instead of flapping silently in the log. Design and edge cases reviewed adversarially (gpt-5.5) before implementation.
+
+### Changes
+
+- Connection/lock: a session that finds the lock held no longer idles forever — it polls every 10 seconds and takes over automatically as soon as the holder exits or its lock goes stale, so closing the duplicate session is all the user needs to do (no relaunch). The contention notice is announced once per episode and the takeover ends with the normal "WhatsApp connected" message, so the handover is visible end to end.
+- Connection/lock: a holder that gets logged out from the phone now releases the lock immediately — a logged-out instance can never serve inbound again, so it stops blocking any session waiting to take over.
+- Connection/440: when another client using the same credentials takes the socket (status 440 — connection replaced), the losing side now posts a channel notification naming the cause and the fix (close one of the two clients sharing creds) — when first detected and then at most once every 6 hours while the fight persists. Reconnect backoff behavior is unchanged; `status.json` additionally exposes `lastDisconnectCode` while reconnecting so doctors and companions can tell a creds fight from network flapping.
+- Connection/lock: a holder that gets logged out wipes its dead auth state BEFORE handing over the lock, so the session taking over can never read credentials mid-deletion; the taker then surfaces the normal QR/pairing flow.
+- Status contract: additive only — `takeoverPollMs` on `idle_other_instance`, `lastDisconnectCode` on `reconnecting`, and a new `connect_error` status (the WhatsApp side could not start after acquiring the lock, e.g. corrupt auth state — the lock is handed back and the session retries every 10 s, so a crashed holder can never wedge the channel). The `idle_other_instance` remediation text now describes the automatic takeover, so companion UIs (e.g. ClawCode's channel doctor) pick up the new guidance with no code change.
+
+### Fixes
+
+- Server resilience: `writeStatus` is now best-effort (a full disk or permission error can no longer crash the server from the status path), the first connection attempt no longer exits the whole MCP server on failure, and reconnect/takeover timers swallow their own rejections — the server stays up for tool calls in every failure mode, matching the never-crash contract.
+- Takeover chain robustness: the retry chain survives transient filesystem errors (a one-off `EACCES`/`ENOSPC` during a poll no longer reverts the session to idle-forever), at most one retry timer ever exists and it is cancelled on acquire and on shutdown (no stray tick can open a second socket or grab the lock during the exit grace), and connection attempts are single-flight so overlapping timers can never double-connect with the same credentials.
+
 ## [1.20.2] — 2026-06-01
 
 ### Why this release matters
