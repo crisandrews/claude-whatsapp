@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [1.21.1] — 2026-07-29
+
+### Why this release matters
+
+Every install eventually stopped connecting, and nothing the user could do fixed it. WhatsApp rejects logins from client builds it has deprecated server-side, and the plugin announced a build number frozen at whatever shipped the day it was installed. Once WhatsApp retired that build, the socket was closed with status 405 on every attempt — before any QR or pairing code was ever issued. The failure looked exactly like a broken session, so the natural response was to reset credentials and re-scan, which could not help: clearing `auth/` produced the same 405, and the QR never appeared because a QR is issued by WhatsApp after the socket opens, not generated locally. Working installs rotted on their own with no local change, and the reconnect loop retried indefinitely against a build WhatsApp would never accept again.
+
+### Fixes
+
+- Connection/client version: the live WhatsApp Web client version is now resolved when the connection is established instead of relying on the build number frozen at install time, so an install no longer stops connecting once WhatsApp deprecates that build. If the lookup fails (offline, upstream unreachable) the bundled default is used, so a version check can never become a new reason not to connect. The resolved version is recorded in `logs/system.log`, so a `405` caused by a stale client is distinguishable from a credentials or network problem.
+
 ## [1.21.0] — 2026-06-09
 
 ### Why this release matters

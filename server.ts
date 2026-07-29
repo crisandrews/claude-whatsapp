@@ -63,6 +63,7 @@ import {
 // ---------------------------------------------------------------------------
 let makeWASocket: any
 let useMultiFileAuthState: any
+let fetchLatestBaileysVersion: any
 let DisconnectReason: any
 let downloadMediaMessage: any
 let getContentType: any
@@ -78,6 +79,7 @@ async function loadDeps(): Promise<boolean> {
     const baileys = await import('@whiskeysockets/baileys')
     makeWASocket = baileys.default
     useMultiFileAuthState = baileys.useMultiFileAuthState
+    fetchLatestBaileysVersion = baileys.fetchLatestBaileysVersion
     DisconnectReason = baileys.DisconnectReason
     downloadMediaMessage = baileys.downloadMediaMessage
     getContentType = baileys.getContentType
@@ -1072,8 +1074,26 @@ async function connectWhatsAppInner() {
     const auth = await useMultiFileAuthState(AUTH_DIR)
     state = auth.state
     saveCreds = auth.saveCreds
+    // WhatsApp rejects logins from deprecated client builds by closing the
+    // socket with a 405, before any QR or pairing code is ever issued. Baileys
+    // ships a hardcoded client version that goes stale as soon as WhatsApp
+    // deprecates that build server-side, so a plugin install silently rots:
+    // every reconnect fails identically, with or without credentials, and
+    // clearing auth/ does not help. Resolve the live version at connect time,
+    // falling back to the bundled default if the lookup fails (offline, etc).
+    let waVersion: any
+    try {
+      const v = await fetchLatestBaileysVersion()
+      if (v?.version) {
+        waVersion = v.version
+        syslog(`whatsapp client version ${v.version.join('.')} (isLatest=${v.isLatest})`)
+      }
+    } catch (e) {
+      syslog(`whatsapp version lookup failed, using bundled default: ${e}`)
+    }
     sock = makeWASocket({
       auth: state,
+      ...(waVersion ? { version: waVersion } : {}),
       printQRInTerminal: false, // stdout is MCP transport, cannot print there
       browser: ['Claude WhatsApp', 'Chrome', '126.0.0'] as any,
       logger,
