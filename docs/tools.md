@@ -95,7 +95,8 @@ Send a text message, optionally with a file attachment.
 |---|---|---|
 | `chat_id` | ✅ | JID from `meta.chat_id` on the inbound message. |
 | `text` | ✅ | The message body. For file attachments this becomes the caption. |
-| `reply_to` | | Message ID to quote. If unset, falls back to `replyToMode` from `config.json` (default: quote the first chunk only). |
+| `reply_to` | | Message ID to quote. Must be a message in the same chat that the plugin has indexed; if it isn't found, the message is sent without a quote and the return text says so. `replyToMode` in `config.json` decides which chunks carry the quote (default: first chunk only). |
+| `mentions` | | Array of user JIDs to @-mention (e.g. `meta.user_id`). Put `@<number>` (the part before `@`) in `text` for each one; WhatsApp renders it as the contact's name and notifies them. Applies to text and to captions. |
 | `file_path` | | Absolute path. Images (`.jpg/.jpeg/.png/.gif/.webp`) are sent as inline images; anything else as a document. |
 
 **Return**
