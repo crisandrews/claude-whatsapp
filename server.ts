@@ -1575,6 +1575,8 @@ async function handleInbound(msg: proto.IWebMessageInfo) {
   // bound to their grant before the gate runs.
   let access = admitAccessSnapshot()
   if (!isGroup && (access.temporaryAllow?.length ?? 0) > 0) {
+    // Only ever the server-asserted key.remoteJidAlt — never message content
+    // (see the trust note on bindAltJidToGrant in contact-requests.ts).
     access = maybeBindTemporaryGrantAlt(access, senderId, chatId, (msg.key as any).remoteJidAlt)
   }
   const result = gate(senderId, chatId, isGroup, mentions, access)

@@ -325,7 +325,7 @@ Optional and **off by default**. Lets you give someone temporary DM access from 
    O responde *aprobar kxqzbt* / *rechazar kxqzbt*.
    ```
    The number is rendered by the plugin from the normalized digits. The name and reason come from the agent: they are sanitized and shown only as context — always check the number.
-4. You react 👍 / ✅ (or reply `approve kxqzbt` / `aprobar kxqzbt`) to approve, 👎 / ❌ (or `deny` / `rechazar`) to refuse. The plugin replies `✅ Habilitado +56 9 1234 5678 hasta 21-nov 11:05` and adds Diego's JIDs (`56912345678@s.whatsapp.net` and his `@lid` form) to `allowFrom`, recorded in `temporaryAllow`.
+4. You react 👍 / ✅ (or reply `approve kxqzbt` / `aprobar kxqzbt`) to approve, 👎 / ❌ (or `deny` / `rechazar`) to refuse. The plugin replies `✅ Habilitado *+56 9 1234 5678* («Diego») hasta 21-nov 11:05.` and adds Diego's JIDs (`56912345678@s.whatsapp.net` and his `@lid` form) to `allowFrom`, recorded in `temporaryAllow`.
 5. The agent receives a system notification (`kind="contact_request"`, `outcome="approved"`, `expires_at`). When the grant expires, the plugin removes Diego's JIDs again and notifies the agent (`grant_expired`).
 
 **Turning it on.** Either:

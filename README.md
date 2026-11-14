@@ -185,7 +185,7 @@ Reacciona 👍 para aprobar o 👎 para rechazar. Vence en 24 h.
 O responde *aprobar kxqzbt* / *rechazar kxqzbt*.
 ```
 
-React 👍/✅ (or reply `approve <id>`) and Diego can DM the agent until the grant expires; 👎/❌ (or `deny <id>`) refuses. You get a confirmation (`✅ Habilitado +56 9 1234 5678 hasta 21-nov 11:05`) and the agent gets a system notification with the outcome. Grants are removed automatically when they expire.
+React 👍/✅ (or reply `approve <id>`) and Diego can DM the agent until the grant expires; 👎/❌ (or `deny <id>`) refuses. You get a confirmation (`✅ Habilitado *+56 9 1234 5678* («Diego») hasta 21-nov 11:05.`) and the agent gets a system notification with the outcome. Grants are removed automatically when they expire.
 
 | Where | Command |
 | --- | --- |

@@ -430,6 +430,12 @@ export function withoutExpiredGrantJids<T extends ContactAccessView>(access: T, 
  * (Baileys `key.remoteJidAlt`) is part of an ACTIVE grant, the sender is the
  * same person under the other namespace: add it to that grant (and allowFrom)
  * so the approved person gets through whichever JID form they arrive with.
+ *
+ * TRUST ASSUMPTION: `altJid` MUST come from the message key's `remoteJidAlt`,
+ * which Baileys fills from the stanza's sender_pn / sender_lid attributes set
+ * by WhatsApp's server (the same mapping Baileys uses to migrate Signal
+ * sessions). Never feed it anything derived from message content or from the
+ * agent — that would let a stranger bind themselves to someone else's grant.
  */
 export function bindAltJidToGrant<T extends ContactAccessView>(
   access: T,
