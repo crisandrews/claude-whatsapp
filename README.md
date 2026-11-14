@@ -33,6 +33,7 @@ This plugin fills that gap. It connects your WhatsApp number directly to Claude 
 - **[Native WhatsApp channel](#quick-setup)** — scan a QR (or use a pairing code on headless servers), pair your contacts, start chatting with Claude.
 - **[Access control](#access-control)** — pairing codes, allowlist, group gating with `requireMention`, plus per-chat history scope (each chat sees its own history by default; designated owners read all). Nobody talks to your agent without permission, and no chat reads another's history.
 - **[Permission relay](#permission-requests-over-whatsapp)** — when Claude wants to run a tool, get the prompt on WhatsApp; approve or deny with a 👍 reaction or `yes <id>` reply.
+- **[Contact requests](#contact-requests)** (opt-in) — tell your agent "enable Diego, +56 9 …"; the plugin asks *you* on WhatsApp and a 👍 grants Diego temporary DM access that expires on its own. The agent can only ask, never approve.
 - **[Local search, export, and discovery](#search-history-and-export)** — every message indexed locally; full-text search, contact and chat discovery, message-context lookup, request older messages from WhatsApp, dump chats to markdown / jsonl / csv.
 - **[Voice transcription](#voice-transcription-optional)** — local Whisper by default (no API keys, 99+ languages); optional cloud providers (Groq / OpenAI) for higher quality on slower hardware.
 - **[Media pipeline](#media)** — inbound images, audio, video, and documents auto-downloaded for Claude to read.
@@ -170,13 +171,41 @@ Default policy is `pairing`. IDs are WhatsApp JIDs — format depends on your Ba
 | `/whatsapp:access group-revoke <group-jid> <member-jid>` | Remove a member from the group's whitelist. |
 | `/whatsapp:access remove-group <jid>` | Stop accepting messages from the group entirely. |
 
+### [Contact requests](#contact-requests)
+
+> *Deep dive: [docs/access.md#contact-requests-owner-approved-temporary-access](docs/access.md#contact-requests-owner-approved-temporary-access).*
+
+Opt-in, **off by default**. Lets you give someone temporary DM access from your phone, with no terminal step. You tell your agent *"enable Diego, +56 9 1234 5678, for the Monday meeting"*; the agent calls `request_contact_access`, and the **plugin** (never the agent) sends you its own prompt:
+
+```
+🔐 *Solicitud de acceso*
+Habilitar a *+56 9 1234 5678* («Diego») por 7 días.
+Motivo: Coordinar la reunión del lunes
+Reacciona 👍 para aprobar o 👎 para rechazar. Vence en 24 h.
+O responde *aprobar kxqzbt* / *rechazar kxqzbt*.
+```
+
+React 👍/✅ (or reply `approve <id>`) and Diego can DM the agent until the grant expires; 👎/❌ (or `deny <id>`) refuses. You get a confirmation (`✅ Habilitado +56 9 1234 5678 hasta 21-nov 11:05`) and the agent gets a system notification with the outcome. Grants are removed automatically when they expire.
+
+| Where | Command |
+| --- | --- |
+| Terminal | `/whatsapp:access contact-requests on [en\|es]` / `off` / `status` / `list` / `revoke <phone\|all>` |
+| Your 1:1 DM with the bot | `!access contact-requests on [en\|es]` / `off` / `status` / `list` / `revoke <phone\|all>` |
+
+What keeps it safe:
+
+- **The agent can only ask.** Approval counts only when it comes from a JID in your live `ownerJids`, in a 1:1 DM, as a reaction to the plugin's own prompt (or `approve <id>`). Anything the bot itself sends (`fromMe`) — including the agent's `react` / `reply` — never counts, the agent can't react to, edit or delete the prompt, and setups where the owner list includes the bot's own account (self-chat) are refused.
+- **Narrow and temporary.** One phone number, DMs only, never an owner, never a group. Default 7 days, owner-configurable maximum (default 14, hard cap 30). Requests expire after 24 h; at most 3 pending and 10 per 24 h.
+- **The number you see is the plugin's.** The agent's label and reason are sanitized and shown as context; always check the number.
+- **Trade-off:** `!access contact-requests` is deliberately **not** behind the `dm-mutations` two-factor switch, so there are zero console steps after install. Whoever controls your WhatsApp could turn it on and approve requests — but they can already command your agent as you, and grants are narrow and expire.
+
 ## [Features](#features)
 
 ### [Tools](#tools)
 
 > *Per-tool reference with arguments, returns, examples, and pitfalls: [docs/tools.md](docs/tools.md).*
 
-The plugin exposes **52 MCP tools** across 12 categories. Each entry below is a single tool — see the docs for arguments and worked examples.
+The plugin exposes **54 MCP tools** across 12 categories. Each entry below is a single tool — see the docs for arguments and worked examples.
 
 **Messaging** — `reply`, `react`, `edit_message`, `delete_message`, `mark_read`, `send_poll`
 
@@ -190,7 +219,7 @@ The plugin exposes **52 MCP tools** across 12 categories. Each entry below is a 
 
 **Group lifecycle** — `create_group`, `join_group`, `get_invite_code`, `revoke_invite_code`
 
-**Contacts** — `check_number_exists`, `get_business_profile`, `block_contact`, `unblock_contact`
+**Contacts** — `check_number_exists`, `get_business_profile`, `block_contact`, `unblock_contact`, `request_contact_access`, `revoke_contact_access`
 
 **Profile self-mgmt** — `update_profile_name`, `update_profile_status`, `update_profile_picture`, `remove_profile_picture`, `update_privacy`
 
@@ -219,6 +248,8 @@ Reactions behave differently depending on what the user reacts to:
 | 👎 / ❌ | Deny the pending tool |
 
 Skin-tone variants of 👍 / 👎 also work. Pending requests time out after 5 minutes; the terminal-side dialog stays active either way, so you can also approve there.
+
+**On a contact request** (a `🔐 Access request` / `🔐 Solicitud de acceso` message, see [Contact requests](#contact-requests)): same emoji, intercepted by the plugin — 👍 / ✅ grants the temporary access, 👎 / ❌ refuses it. Only the owner's reaction in their 1:1 DM counts; contact requests stay pending for 24 hours.
 
 **On a regular message**: the reaction is forwarded to Claude as `[Reacted with X]` and Claude interprets it from context — typically 👍 as "ok/proceed" and 👎 as "no/stop".
 

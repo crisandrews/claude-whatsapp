@@ -15,11 +15,13 @@ Please give the maintainer a reasonable window to respond (target: first acknowl
 
 The code in this repository:
 
-- `server.ts`, `lib.ts`, `db.ts`, `bootstrap.mjs`
+- `server.ts`, `lib.ts`, `db.ts`, `bootstrap.mjs`, `access-helpers.ts`, `contact-requests.ts`
 - The `skills/` directory
 - The published `<channel-dir>/*` state contract (`access.json`, `config.json`, `recent-groups.json`, `status.json`, etc.) — bugs that let an attacker bypass access control, read auth credentials from outside the plugin, or exfiltrate state via the channel surface.
 - The MCP tool surface (`reply`, `react`, `edit_message`, `delete_message`, `send_poll`, `download_attachment`, `search_messages`, `fetch_history`, `list_group_senders`, `export_chat`, `get_message_context`, `get_chat_analytics`, `list_chats`, `search_contact`, `forward_message`) — bugs that let untrusted channel input trigger unintended tool calls, file access outside the inbox directory, or other privilege escalation.
 - The permission relay protocol implementation — bugs that let an attacker approve or deny a tool decision without authorization.
+- Owner-approved contact requests (`contact-requests.ts`, the `request_contact_access` / `revoke_contact_access` tools, and the owner-DM `!access contact-requests …` commands) — bugs that let anyone other than a configured owner, **including the agent itself** (its `reply` / `react` / `edit_message` tools, cross-device or receipt echoes of the bot's own account, self-chat setups), enable the feature, approve or extend a grant; that let a grant cover an owner, the bot or a group, become permanent, or outlive its expiry; or that let agent-supplied text (label / reason) misrepresent the phone number shown to the owner.
+- Owner-DM `!access …` commands — bugs that let a non-owner run them, or that let them reach the agent.
 - The per-chat history-scope gate (`resolveScope` / `assertReadableScope` / `scopedAllowedChats` in `scope.ts`, `setInboundContext` in `server.ts`) — bugs that let a non-owner chat read messages, metadata, or cached proto from another chat via any of the nine gated read/exfil tools. The fail-closed semantics when an owner is configured and no inbound context exists are load-bearing; regressions there are in scope.
 
 ## What's out of scope
@@ -28,6 +30,13 @@ The code in this repository:
 - **WhatsApp itself** (Meta). Vulnerabilities in WhatsApp's protocol, server, or apps are not in scope here.
 - **Claude Code** (the host). Vulnerabilities in the Claude Code CLI, MCP framework, or skill loader belong upstream.
 - **Other plugins** — including, but not limited to, [ClawCode](https://github.com/crisandrews/ClawCode). If a bug only manifests when claude-whatsapp interacts with another plugin and the root cause is in that other plugin, route the report there. Cross-plugin coordination bugs that require both sides to fix are welcome here.
+
+## Documented trade-offs (by design)
+
+- **`!access contact-requests …` is not behind the `dm-mutations` two-factor switch.** The owner can turn contact requests on and approve them entirely from their 1:1 DM, with no environment variable, so there are zero console steps after install. Consequence: whoever controls the owner's WhatsApp (an unlocked phone, a hijacked account) could enable the feature and approve requests. That person can already command the agent as the owner, and contact-request grants are narrow — one phone number, DMs only, never an owner or a group — and expire (default 7 days, hard cap 30). The feature is off by default. The other `!access` subcommands keep their two-factor gate.
+- **Approvals are as trustworthy as the owner's attention.** The plugin always renders the phone number itself (agent-supplied label and reason are sanitized and shown as context), and the agent cannot react to, edit or delete the prompt, but an owner who approves without reading the number can still be socially engineered.
+- **Self-chat setups are refused.** If `ownerJids` contains the bot's own account, WhatsApp-side contact-request approvals and commands are refused outright, because the agent's own messages cannot be told apart from the owner's there. Use a separate owner number.
+- **LID binding trusts the server-asserted alternate JID.** When an approved person first writes under their other JID form (`@lid` vs `@s.whatsapp.net`) and that form wasn't resolvable at approval time, the plugin binds it to the grant using the `remoteJidAlt` attribute that WhatsApp's server attaches to the message (the same mapping Baileys uses for its Signal sessions).
 
 ## What is *not* a security bug
 

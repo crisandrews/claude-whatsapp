@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+_Draft for v1.23.0 — versions not bumped yet._
+
+### Why this release matters
+
+Adding someone to the DM allowlist was terminal-only: the owner had to reach a console to let a new person talk to the agent, even for a one-off ("let Diego message you this week"). This release adds **owner-approved, time-limited contact requests**, opt-in and off by default. The owner tells the agent "enable Diego, +56 9 …"; the agent can only *request* it, the plugin — never the agent — asks the owner on WhatsApp, and a 👍 from the owner's own phone grants Diego DM access that expires by itself. The LLM stays out of the trust path exactly like the permission relay and the owner-DM `!access` commands.
+
+### Changes
+
+- **New MCP tool `request_contact_access`** `{ phone, label, reason, days? }`. Files an in-memory pending request (valid 24 h) and sends each owner DM a plugin-authored prompt (`🔐 Access request` / `🔐 Solicitud de acceso`, en/es). Returns `{ status: "pending", request_id, expires_at }`, or a clear status instead (`disabled`, `already_allowed`, `is_owner`, `is_self`, `rate_limited`, `no_owner`, `self_chat_owner`, `dm_disabled`, …). Strict E.164 input (8–15 digits; JIDs and group ids rejected), `days` clamped to the owner's `maxDays` (default 14, hard cap 30), at most 3 pending and 10 per rolling 24 h. The agent's `label` and `reason` are sanitized (control, bidi and zero-width characters, newlines, WhatsApp formatting; ≤ 40 / ≤ 200 chars; labels can't carry phone numbers) and the prompt always shows the plugin-normalized number.
+- **Owner approval on WhatsApp.** 👍/✅ approves and 👎/❌ denies — only as a reaction to the plugin's own prompt — or reply `approve <id>` / `deny <id>` (also `aprobar` / `rechazar`). Counted only for a sender in the **live** `ownerJids`, in a 1:1 DM, never `fromMe`, never the bot's own account (either JID form), and never while the bot identity is still unknown; setups whose owner list includes the bot's own account (self-chat) are refused outright. First decision wins; ownership and the feature switch are re-checked against a fresh `access.json` right before the write. Decisions are consumed, never forwarded to the agent; a late reaction on an already-decided prompt gets an explicit "already resolved" reply (with a revoke hint) instead of silently doing nothing.
+- **Grants.** On approval the person's JIDs — `<phone>@s.whatsapp.net` plus the `@lid` form resolved through Baileys' LID mapping — are added to `allowFrom` and recorded in the new `access.json` `temporaryAllow` list, the owner gets `✅ Habilitado +56 9 1234 5678 hasta 21-nov 11:05`, and the agent gets a `source: "system"` channel notification (`kind: "contact_request"`, `request_id`, `phone`, `outcome`, `expires_at`). If the `@lid` form wasn't resolvable, the first message from it is bound to the grant via the server-asserted `remoteJidAlt`.
+- **Expiry.** Admit decisions (inbound gate and outbound sends) ignore expired grants immediately; a sweep at startup, on connect and every minute removes them from `access.json` — only grant-created JIDs, never owners or permanent entries — and notifies the agent (`grant_expired`). Pending requests expire after 24 h (`expired`).
+- **New MCP tool `revoke_contact_access`** `{ phone }` — narrowing only: removes temporary grants and cancels a pending request for that number.
+- **Owner switch, no console needed.** `/whatsapp:access contact-requests on|off|status|list|revoke <phone|all> [en|es]` in the terminal, or `!access contact-requests …` from the owner's 1:1 DM — handled natively, consumed, owner-only by JID. Deliberately **not** behind the `dm-mutations` two-factor (documented trade-off in SECURITY.md); every other `!access` subcommand keeps its existing gate and behavior.
+- `react`, `edit_message` and `delete_message` refuse plugin-authored contact prompts, so the agent can't rewrite the number the owner is approving.
+- `access.json` schema (additive, optional): `contactRequests { enabled, locale?, defaultDays?, maxDays? }` and `temporaryAllow[]`. The access skill now preserves both keys, promotes a temporarily granted JID to permanent on `allow` / `pair`, and removes it on `revoke`.
+
 ## [1.22.0] — 2026-11-15
 
 ### Why this release matters
