@@ -15,6 +15,20 @@ type Statement = any
 let dbInstance: Database | null = null
 let DatabaseCtor: any = null
 
+// Why the last initDb() failed. The store is optional by design — the channel
+// keeps delivering messages when it can't open — but discarding the reason made
+// a broken store indistinguishable from an empty one: search, export and
+// history all returned "no results" with nothing in the log to explain it.
+// Native-module problems (a better-sqlite3 built against a different Node ABI,
+// which happens on every Node upgrade) report themselves clearly here and
+// nowhere else.
+let lastDbError: string | null = null
+
+// Reason the local store is unavailable, or null when it opened cleanly.
+export function getLastDbError(): string | null {
+  return lastDbError
+}
+
 export interface IndexedMessage {
   id: string
   chat_id: string
@@ -164,8 +178,10 @@ export async function initDb(dbPath: string): Promise<boolean> {
       // can't be used until the schema catches up.
     }
 
+    lastDbError = null
     return true
-  } catch {
+  } catch (err) {
+    lastDbError = err instanceof Error ? err.message : String(err)
     dbInstance = null
     return false
   }
