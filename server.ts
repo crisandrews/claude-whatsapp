@@ -18,6 +18,7 @@ import {
   summarizePermissionInput,
   type ChunkMode,
   type LockResult,
+  describeContactCards,
 } from './lib.js'
 import {
   initDb,
@@ -2127,9 +2128,15 @@ async function extractMessage(msg: proto.IWebMessageInfo): Promise<{ text: strin
     return { text: `[Location: ${lat}, ${lng}]`, meta }
   }
 
-  // Contact
-  if (m.contactMessage) {
-    return { text: `[Contact: ${m.contactMessage.displayName}]`, meta }
+  // Contact card(s): surface the phone numbers from the vCard, not just the
+  // display name (untrusted content: only TEL digits + a sanitized name).
+  if (m.contactMessage || m.contactsArrayMessage) {
+    const cards = m.contactMessage
+      ? [{ displayName: m.contactMessage.displayName, vcard: m.contactMessage.vcard }]
+      : (m.contactsArrayMessage?.contacts ?? []).map((c) => ({ displayName: c.displayName, vcard: c.vcard }))
+    const { text, phones } = describeContactCards(cards)
+    if (phones.length) meta.contact_phones = phones.join(',')
+    return { text, meta }
   }
 
   // Fallback

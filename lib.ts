@@ -332,3 +332,62 @@ export function acquireLock(opts: AcquireLockOptions): LockResult {
   log(`stale lock found (PID ${existingPid} no longer alive), reclaiming`)
   return reclaim('stale-pid')
 }
+
+// ---------------------------------------------------------------------------
+// Inbound contact cards (vCard) — surface the phone numbers, not just the name
+// ---------------------------------------------------------------------------
+// A shared contact arrives as a vCard. Before this, the agent only saw the
+// display name, so "here's Diego's card" was useless without the number.
+// The vCard is untrusted content: we only extract digits from TEL lines and a
+// sanitized display name; nothing else from the card reaches the agent.
+
+const MAX_CARD_NAME = 60
+const MAX_CARD_PHONES = 5
+
+/** Strip control chars/newlines and bracket-like delimiters, cap length. */
+export function sanitizeCardName(name: string | null | undefined): string {
+  const clean = String(name ?? '')
+    .replace(/[\u0000-\u001f\u007f\u2028\u2029]/g, ' ')
+    .replace(/[\[\]]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  return clean.slice(0, MAX_CARD_NAME) || 'unknown'
+}
+
+/**
+ * Phone numbers from a vCard's TEL lines, as `+<digits>`. Prefers WhatsApp's
+ * `waid=` parameter (the account's number) over the free-text value. Folded
+ * lines are unfolded first. Deduplicated, 8–15 digits, at most 5.
+ */
+export function parseVcardPhones(vcard: string | null | undefined): string[] {
+  if (!vcard) return []
+  const lines = String(vcard).replace(/\r?\n[ \t]/g, '').split(/\r?\n/)
+  const out: string[] = []
+  for (const line of lines) {
+    const m = /^(?:item\d+\.)?TEL([^:]*):(.*)$/i.exec(line.trim())
+    if (!m) continue
+    const waid = /(?:^|;)waid=(\d+)/i.exec(m[1])
+    const digits = (waid ? waid[1] : m[2]).replace(/\D/g, '')
+    if (digits.length < 8 || digits.length > 15) continue
+    const phone = `+${digits}`
+    if (!out.includes(phone)) out.push(phone)
+    if (out.length >= MAX_CARD_PHONES) break
+  }
+  return out
+}
+
+/** `[Contact: Diego — +56912345678]` for one or more shared cards. */
+export function describeContactCards(cards: Array<{ displayName?: string | null; vcard?: string | null }>): {
+  text: string
+  phones: string[]
+} {
+  const parts: string[] = []
+  const phones: string[] = []
+  for (const c of cards.slice(0, 10)) {
+    const p = parseVcardPhones(c.vcard)
+    for (const x of p) if (!phones.includes(x)) phones.push(x)
+    parts.push(`${sanitizeCardName(c.displayName)}${p.length ? ' — ' + p.join(', ') : ' (no phone number in card)'}`)
+  }
+  const label = parts.length > 1 ? 'Contacts' : 'Contact'
+  return { text: `[${label}: ${parts.join('; ') || 'empty card'}]`, phones }
+}
