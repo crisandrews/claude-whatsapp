@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+## [1.22.0] — 2026-11-15
+
+### Why this release matters
+
+Quoted replies were broken: every `reply` with `reply_to` failed, because the quoted message handed to Baileys was a key-only stub with no message body. This release fixes quoting, lets the agent actually tag people in a reply, and removes two silent failure modes: shared contact cards that reached the agent without the phone number, and a message store that failed to open but looked exactly like an empty one.
+
+### Fixes
+
+- Reply/quote: `reply_to` no longer crashes. The quoted message is rebuilt from the cached raw message, scoped to the reply's own chat (text, or caption plus mimetype for media). (#9, by willwwh)
+- Message store: when `messages.db` cannot be opened, the startup log now states the reason instead of letting `search_messages`, `export_chat` and `fetch_history` silently return nothing. (#11)
+
+### Changes
+
+- Reply: new `mentions` argument (user JIDs, `@s.whatsapp.net` or `@lid`), so an `@<number>` in the text notifies the person. Applies to text messages and to image/document captions. (#9)
+- Groups: per-group `imagesOnly` filter in `access.json` — only messages that carry an image are delivered for that group, including ephemeral and view-once wrappers. (#9)
+- Inbound: shared contact cards (vCard) now surface their phone numbers in `meta.contact_phones`, preferring WhatsApp's `waid` parameter. The card is untrusted content: only digits and a sanitized, length-capped display name reach the agent. (#10)
+
 ## [1.21.1] — 2026-07-29
 
 ### Why this release matters
