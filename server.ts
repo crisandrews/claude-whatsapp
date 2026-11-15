@@ -23,6 +23,7 @@ import {
 import {
   initDb,
   isDbReady,
+  getLastDbError,
   indexMessage,
   searchMessages,
   getMessages,
@@ -5181,7 +5182,11 @@ async function main() {
   // Initialize the local message store. Failure is non-fatal — channel
   // delivery still works, only search/export/history tools degrade.
   if (!(await initDb(MESSAGES_DB_PATH))) {
-    syslog('messages.db could not be opened — search/export/history tools will return empty')
+    const dbReason = getLastDbError()
+    syslog(
+      'messages.db could not be opened — search/export/history tools will return empty' +
+        (dbReason ? `: ${dbReason}` : ''),
+    )
   }
 
   // Initialize audio transcription if enabled (non-blocking)
