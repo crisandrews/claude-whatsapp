@@ -574,6 +574,9 @@ interface AccessState {
     requireMention: boolean
     allowFrom: string[]
     historyScope?: HistoryScope
+    // Only deliver image messages; text, voice, stickers etc. are dropped.
+    // Combines with requireMention (true → only tagged images).
+    imagesOnly?: boolean
   }>
   // Per-DM history scope overrides. DMs are otherwise uninteresting to track
   // separately (they live in allowFrom) — this map exists purely to hang a
@@ -1506,6 +1509,8 @@ async function handleInbound(msg: proto.IWebMessageInfo) {
     return
   }
 
+  if (isGroup && access.groups[chatId]?.imagesOnly && !hasImage(msg)) return
+
   // Show "typing..." indicator while Claude processes the message
   try { await sock!.sendPresenceUpdate('composing', chatId) } catch {}
 
@@ -1944,6 +1949,60 @@ function extractMentions(msg: proto.IWebMessageInfo): GateMentions {
   const mentioned = Array.isArray(ctx.mentionedJid) ? (ctx.mentionedJid as string[]) : []
   const quotedAuthor = typeof ctx.participant === 'string' ? ctx.participant : undefined
   return { mentioned, quotedAuthor }
+}
+
+// True when the message carries an image (including ephemeral / view-once
+// wrappers). Used by the per-group `imagesOnly` filter.
+function hasImage(msg: proto.IWebMessageInfo): boolean {
+  let m: any = msg.message
+  if (!m) return false
+  m = m.ephemeralMessage?.message || m.viewOnceMessage?.message || m.viewOnceMessageV2?.message || m
+  return !!m.imageMessage
+}
+
+// ---------------------------------------------------------------------------
+// Build the `quoted` option for sendMessage from the cached inbound message.
+// Baileys reads `quoted.message` to build contextInfo.quotedMessage, so a
+// key-only stub crashes it. The cached raw_message went through JSON, which
+// mangles binary fields (thumbnails, media keys), so we rebuild a minimal,
+// text-only quoted message: WhatsApp still renders the quote bubble with the
+// right author and caption ("📷 Photo" for images). Returns undefined when
+// the message isn't in the local store for this chat.
+// ---------------------------------------------------------------------------
+function buildQuoted(chatId: string, messageId: string): any | undefined {
+  const raw = getRawMessage(messageId, [chatId])
+  if (!raw?.key) return undefined
+  let m = raw.message || {}
+  m = m.ephemeralMessage?.message || m.viewOnceMessage?.message || m.viewOnceMessageV2?.message || m
+  const caption = (x: any) => (typeof x?.caption === 'string' ? x.caption : undefined)
+  let message: any
+  if (typeof m.conversation === 'string') message = { conversation: m.conversation }
+  else if (m.extendedTextMessage) message = { conversation: m.extendedTextMessage.text || '' }
+  else if (m.imageMessage) message = { imageMessage: { caption: caption(m.imageMessage), mimetype: m.imageMessage.mimetype } }
+  else if (m.videoMessage) message = { videoMessage: { caption: caption(m.videoMessage), mimetype: m.videoMessage.mimetype } }
+  else if (m.documentMessage) message = { documentMessage: { caption: caption(m.documentMessage), fileName: m.documentMessage.fileName, mimetype: m.documentMessage.mimetype } }
+  else if (m.audioMessage) message = { audioMessage: { mimetype: m.audioMessage.mimetype, ptt: !!m.audioMessage.ptt } }
+  else if (m.stickerMessage) message = { stickerMessage: { mimetype: m.stickerMessage.mimetype } }
+  else message = { conversation: '' }
+  return {
+    key: {
+      remoteJid: chatId,
+      id: messageId,
+      fromMe: !!raw.key.fromMe,
+      participant: raw.key.participant || undefined,
+    },
+    message,
+  }
+}
+
+// Mentions passed to `reply`: only user JIDs, deduplicated.
+function normalizeMentions(input: unknown): string[] {
+  if (!Array.isArray(input)) return []
+  const out = new Set<string>()
+  for (const j of input) {
+    if (typeof j === 'string' && /^[^@\s]+@(s\.whatsapp\.net|lid)$/.test(j)) out.add(j)
+  }
+  return [...out]
 }
 
 // ---------------------------------------------------------------------------
@@ -2427,7 +2486,12 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
           text: { type: 'string', description: 'The message text to send' },
           reply_to: {
             type: 'string',
-            description: 'Message ID to quote/reply to (from meta.message_id)',
+            description: 'Message ID to quote/reply to (from meta.message_id). Must be a message in the same chat that the plugin has seen.',
+          },
+          mentions: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'User JIDs to @-mention (e.g. meta.user_id, "155400590622759@lid"). For each one, also put "@" + the part before "@" in the text (e.g. "@155400590622759"); WhatsApp renders that as the tag and notifies the person.',
           },
           file_path: {
             type: 'string',
@@ -3203,6 +3267,10 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
 
       const { chat_id, text, reply_to, file_path } = args
       assertAllowedChat(chat_id)
+      const mentions = normalizeMentions((args as any).mentions)
+      const mentionOpt = mentions.length ? { mentions } : {}
+      const quoted = reply_to ? buildQuoted(chat_id, reply_to) : undefined
+      const quoteNote = reply_to && !quoted ? ' (reply_to message not found in this chat; sent without quote)' : ''
 
       // Index an outbound send into the local message store.
       const indexOutbound = (sent: any, body: string, meta?: Record<string, string>) => {
@@ -3229,13 +3297,11 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
         const ext = path.extname(absPath).toLowerCase()
         const imageExts = ['.jpg', '.jpeg', '.png', '.gif', '.webp']
 
-        const quoted = reply_to ? { key: { remoteJid: chat_id, id: reply_to, fromMe: false } } : undefined
-
         let sent: any
         if (imageExts.includes(ext)) {
           sent = await sock.sendMessage(
             chat_id,
-            { image: { url: absPath }, caption: text || undefined },
+            { image: { url: absPath }, caption: text || undefined, ...mentionOpt },
             { quoted: quoted as any },
           )
         } else {
@@ -3246,6 +3312,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
               mimetype: 'application/octet-stream',
               fileName: path.basename(absPath),
               caption: text || undefined,
+              ...mentionOpt,
             },
             { quoted: quoted as any },
           )
@@ -3256,7 +3323,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
           attachment_filename: path.basename(absPath),
         })
         logConversation('out', 'Claude', `[File: ${path.basename(absPath)}] ${text || ''}`, { chat_id })
-        return { content: [{ type: 'text', text: `Sent file: ${path.basename(absPath)}` }] }
+        return { content: [{ type: 'text', text: `Sent file: ${path.basename(absPath)}${quoteNote}` }] }
       }
 
       const cfg = loadConfig()
@@ -3264,8 +3331,6 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       const chunkMode: ChunkMode = cfg.chunkMode ?? 'length'
       const replyToMode = cfg.replyToMode ?? 'first'
       const docThreshold = cfg.documentThreshold ?? 0
-
-      const quoted = reply_to ? { key: { remoteJid: chat_id, id: reply_to, fromMe: false } } : undefined
 
       // Auto-document: long replies become a single attachment instead of N
       // chunked text messages. Threshold 0 = disabled, -1 = always, N = trigger
@@ -3314,7 +3379,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
           (replyToMode === 'first' && i === 0)
         const sent = await sock.sendMessage(
           chat_id,
-          { text: chunks[i] },
+          { text: chunks[i], ...mentionOpt },
           { quoted: useQuote ? (quoted as any) : undefined },
         )
         indexOutbound(sent, chunks[i])
@@ -3330,7 +3395,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
         content: [
           {
             type: 'text',
-            text: chunks.length > 1 ? `Sent ${chunks.length} messages (auto-chunked, ${chunkMode})` : 'Message sent',
+            text: (chunks.length > 1 ? `Sent ${chunks.length} messages (auto-chunked, ${chunkMode})` : 'Message sent') + quoteNote,
           },
         ],
       }

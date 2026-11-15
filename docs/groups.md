@@ -67,6 +67,8 @@ Group state is stored in `<channel-dir>/access.json` under the `groups` field:
 
 `requireMention` controls whether the bot needs to be @-mentioned (or quote-replied to) for a message to reach Claude. `allowFrom` is empty for "anyone in the group can trigger" or a list of JIDs for "only these members".
 
+Optional `imagesOnly: true` (hand-edited in `access.json`) delivers only image messages; text, reactions, voice notes, stickers and other media are dropped. It applies on top of the policies below, so `requireMention: false` + `imagesOnly: true` delivers every image, and `requireMention: true` + `imagesOnly: true` delivers only images whose caption tags the bot. Dropped messages are not indexed.
+
 ---
 
 ## The four policies
