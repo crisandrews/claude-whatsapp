@@ -53,6 +53,7 @@ import {
 import { writeInboundMarker } from './marker.js'
 import { writeRequestEnvelope } from './envelope.js'
 import { buildChannelMeta } from './channel-meta.js'
+import { downloadMedia, findMediaNode, reviveStoredMessage, forEachIsolated, downloadFailedSuffix, MediaDownloadError } from './media-download.js'
 import { permissionApprovers, canApprovePermission, newGroupAutoRegistration, isOwnerDmCommandText, parseOwnerDmCommand, ownerDmMutationsActive } from './access-helpers.js'
 import {
   ContactRequestRegistry,
@@ -120,7 +121,7 @@ let makeWASocket: any
 let useMultiFileAuthState: any
 let fetchLatestBaileysVersion: any
 let DisconnectReason: any
-let downloadMediaMessage: any
+let getMediaKeys: any
 let getContentType: any
 let Browsers: any
 let Boom: any
@@ -136,7 +137,7 @@ async function loadDeps(): Promise<boolean> {
     useMultiFileAuthState = baileys.useMultiFileAuthState
     fetchLatestBaileysVersion = baileys.fetchLatestBaileysVersion
     DisconnectReason = baileys.DisconnectReason
-    downloadMediaMessage = baileys.downloadMediaMessage
+    getMediaKeys = baileys.getMediaKeys
     getContentType = baileys.getContentType
     Browsers = baileys.Browsers
 
@@ -272,7 +273,7 @@ process.on('unhandledRejection', (err) => {
   syslog(`unhandled rejection: ${err}`)
 })
 process.on('uncaughtException', (err) => {
-  syslog(`uncaught exception: ${err}`)
+  syslog(`uncaught exception: ${(err as any)?.stack || err}`)
 })
 
 // ---------------------------------------------------------------------------
@@ -920,6 +921,7 @@ When you receive a <channel source="whatsapp"> message:
 - Use the "reply" tool to respond. Always pass the chat_id from the inbound message.
 - Use the "react" tool to add emoji reactions.
 - For media messages, the text will describe the attachment type. Use "download_attachment" to save media locally.
+- If the text says "download failed" (meta attachment_download_failed="true"), the media could not be fetched when the message arrived. Call "download_attachment" with that message's message_id to retry before telling the user you could not get it.
 
 WhatsApp formatting — follow these rules strictly:
 - Bold: *text* (single asterisks only, NEVER double **)
@@ -1529,9 +1531,11 @@ async function connectWhatsAppInner() {
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     if (type !== 'notify') return
 
-    for (const msg of messages) {
-      if (!msg.message) continue
-      if (msg.key.fromMe) continue
+    // Each message is handled in isolation: whatever one of them throws, the
+    // rest of the batch is still processed.
+    await forEachIsolated(messages, async (msg) => {
+      if (!msg.message) return
+      if (msg.key.fromMe) return
 
       // Capture LID→phone mappings from key.*Alt fields. These are present
       // on group messages addressed in LID mode and let us later resolve
@@ -1551,7 +1555,9 @@ async function connectWhatsAppInner() {
       }
 
       await handleInbound(msg)
-    }
+    }, (err, msg) => {
+      syslog(`inbound handling failed for message ${msg?.key?.id}: ${(err as any)?.stack || err}`)
+    })
   })
 }
 
@@ -1635,7 +1641,22 @@ async function handleInbound(msg: proto.IWebMessageInfo) {
   }
 
   // Extract message content
-  const { text, meta } = await extractMessage(msg)
+  // Extraction must never lose the message: if it throws, the inbound is still
+  // indexed and delivered with a placeholder instead of vanishing.
+  let text: string
+  let meta: Record<string, string>
+  try {
+    ({ text, meta } = await extractMessage(msg))
+  } catch (err) {
+    syslog(`message extraction failed for ${messageId}: ${(err as any)?.stack || err}`)
+    meta = { processing_error: 'true' }
+    const media = findMediaNode(msg.message)
+    if (media) {
+      meta.attachment_kind = media.type
+      meta.attachment_download_failed = 'true'
+    }
+    text = `[Message received — content could not be processed${downloadFailedSuffix(!!media)}]`
+  }
 
   // Local index: every delivered inbound is recorded so search/export/
   // history tools can answer queries without re-fetching from WhatsApp.
@@ -2100,6 +2121,59 @@ function normalizeMentions(input: unknown): string[] {
 }
 
 // ---------------------------------------------------------------------------
+// Inbound media download. Goes through media-download.ts rather than Baileys'
+// downloadMediaMessage, whose piped stream turns a mid-body socket close into
+// an uncaught exception plus a download that never settles (see that file).
+// Retries transient failures; asks for a re-upload when the media expired.
+// ---------------------------------------------------------------------------
+const REUPLOAD_TIMEOUT_MS = 20_000
+
+async function downloadInboundMedia(msg: any): Promise<Buffer> {
+  const found = findMediaNode(msg?.message)
+  if (!found) throw new MediaDownloadError('message has no downloadable media', { retryable: false })
+  const s = sock
+  return downloadMedia(found.node, found.type, {
+    getMediaKeys,
+    reupload: s ? async () => {
+      let timer: ReturnType<typeof setTimeout> | undefined
+      try {
+        const updated = await Promise.race([
+          s.updateMediaMessage(msg),
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(() => reject(new Error('re-upload request timed out')), REUPLOAD_TIMEOUT_MS)
+          }),
+        ])
+        return findMediaNode(updated?.message)?.node
+      } finally {
+        clearTimeout(timer)
+      }
+    } : undefined,
+    log: syslog,
+  }, { maxBytes: MAX_ATTACHMENT_BYTES })
+}
+
+// Record a failed inbound download. Returns true when the agent should be told
+// it can retry (anything but an oversized file, which would fail again).
+function noteDownloadFailure(meta: Record<string, string>, what: string, err: unknown): boolean {
+  syslog(`${what} download failed: ${err}`)
+  if (err instanceof MediaDownloadError && err.tooLarge) return false
+  meta.attachment_download_failed = 'true'
+  return true
+}
+
+function inboxPathForMedia(type: string, node: any): string {
+  const mimetype = typeof node?.mimetype === 'string' ? node.mimetype : ''
+  const stamp = Date.now()
+  let filename: string
+  if (type === 'image') filename = `img_${stamp}.${safeExt(mimetype || 'image/jpeg', 'jpg')}`
+  else if (type === 'video') filename = `video_${stamp}.${safeExt(mimetype || 'video/mp4', 'mp4')}`
+  else if (type === 'audio') filename = `audio_${stamp}.ogg`
+  else if (type === 'sticker') filename = `sticker_${stamp}.webp`
+  else filename = safeName(node?.fileName) || `doc_${stamp}`
+  return path.join(INBOX_DIR, filename)
+}
+
+// ---------------------------------------------------------------------------
 // Extract message content and metadata
 // ---------------------------------------------------------------------------
 async function extractMessage(msg: proto.IWebMessageInfo): Promise<{ text: string; meta: Record<string, string> }> {
@@ -2127,16 +2201,17 @@ async function extractMessage(msg: proto.IWebMessageInfo): Promise<{ text: strin
     const caption = m.imageMessage.caption || ''
     meta.attachment_kind = 'image'
     meta.attachment_mimetype = m.imageMessage.mimetype || 'image/jpeg'
+    let failed = false
     try {
-      const buffer = await downloadMediaMessage(msg, 'buffer', {}, { logger, reuploadRequest: sock!.updateMediaMessage }) as Buffer
-      if (buffer.length > MAX_ATTACHMENT_BYTES) throw new Error('File too large')
+      const buffer = await downloadInboundMedia(msg)
       const ext = safeExt(meta.attachment_mimetype, 'jpg')
       const filename = `img_${Date.now()}.${ext}`
       const filepath = path.join(INBOX_DIR, filename)
       fs.writeFileSync(filepath, buffer)
       meta.image_path = filepath
-    } catch (err) { syslog(`image download failed: ${err}`) }
-    return { text: caption ? `[Image] ${caption}` : '[Image received]', meta }
+    } catch (err) { failed = noteDownloadFailure(meta, 'image', err) }
+    const f = downloadFailedSuffix(failed)
+    return { text: caption ? `[Image${f}] ${caption}` : `[Image received${f}]`, meta }
   }
 
   // Document
@@ -2145,14 +2220,14 @@ async function extractMessage(msg: proto.IWebMessageInfo): Promise<{ text: strin
     meta.attachment_mimetype = m.documentMessage.mimetype || 'application/octet-stream'
     const cleanName = safeName(m.documentMessage.fileName) || `doc_${Date.now()}`
     meta.attachment_filename = cleanName
+    let failed = false
     try {
-      const buffer = await downloadMediaMessage(msg, 'buffer', {}, { logger, reuploadRequest: sock!.updateMediaMessage }) as Buffer
-      if (buffer.length > MAX_ATTACHMENT_BYTES) throw new Error('File too large')
+      const buffer = await downloadInboundMedia(msg)
       const filepath = path.join(INBOX_DIR, cleanName)
       fs.writeFileSync(filepath, buffer)
       meta.attachment_path = filepath
-    } catch (err) { syslog(`media download failed: ${err}`) }
-    return { text: `[Document: ${cleanName}]`, meta }
+    } catch (err) { failed = noteDownloadFailure(meta, 'document', err) }
+    return { text: `[Document: ${cleanName}${downloadFailedSuffix(failed)}]`, meta }
   }
 
   // Audio / Voice
@@ -2160,20 +2235,15 @@ async function extractMessage(msg: proto.IWebMessageInfo): Promise<{ text: strin
     meta.attachment_kind = m.audioMessage.ptt ? 'voice' : 'audio'
     meta.attachment_mimetype = m.audioMessage.mimetype || 'audio/ogg'
     let audioBuffer: Buffer | null = null
+    let failed = false
     try {
-      // Use 'stream' mode — Baileys v7 has a bug where 'buffer' returns 0 bytes for audio
-      const stream = await downloadMediaMessage(msg, 'stream', {}, { logger, reuploadRequest: sock!.updateMediaMessage })
-      const chunks: Buffer[] = []
-      for await (const chunk of stream as AsyncIterable<Buffer>) { chunks.push(chunk) }
-      audioBuffer = Buffer.concat(chunks)
-      if (!audioBuffer || audioBuffer.length === 0) throw new Error('Empty audio buffer')
-      if (audioBuffer.length > MAX_ATTACHMENT_BYTES) throw new Error('File too large')
+      audioBuffer = await downloadInboundMedia(msg)
       const filename = `audio_${Date.now()}.ogg`
       const filepath = path.join(INBOX_DIR, filename)
       fs.writeFileSync(filepath, audioBuffer)
       meta.attachment_path = filepath
     } catch (err) {
-      syslog(`audio download failed: ${err}`)
+      failed = noteDownloadFailure(meta, 'audio', err)
       audioBuffer = null
     }
 
@@ -2188,7 +2258,7 @@ async function extractMessage(msg: proto.IWebMessageInfo): Promise<{ text: strin
       }
     }
 
-    return { text: `[${meta.attachment_kind === 'voice' ? 'Voice message' : 'Audio'} received]`, meta }
+    return { text: `[${meta.attachment_kind === 'voice' ? 'Voice message' : 'Audio'} received${downloadFailedSuffix(failed)}]`, meta }
   }
 
   // Video
@@ -2196,16 +2266,17 @@ async function extractMessage(msg: proto.IWebMessageInfo): Promise<{ text: strin
     meta.attachment_kind = 'video'
     meta.attachment_mimetype = m.videoMessage.mimetype || 'video/mp4'
     const caption = m.videoMessage.caption || ''
+    let failed = false
     try {
-      const buffer = await downloadMediaMessage(msg, 'buffer', {}, { logger, reuploadRequest: sock!.updateMediaMessage }) as Buffer
-      if (buffer.length > MAX_ATTACHMENT_BYTES) throw new Error('File too large')
+      const buffer = await downloadInboundMedia(msg)
       const ext = safeExt(meta.attachment_mimetype, 'mp4')
       const filename = `video_${Date.now()}.${ext}`
       const filepath = path.join(INBOX_DIR, filename)
       fs.writeFileSync(filepath, buffer)
       meta.attachment_path = filepath
-    } catch (err) { syslog(`media download failed: ${err}`) }
-    return { text: caption ? `[Video] ${caption}` : '[Video received]', meta }
+    } catch (err) { failed = noteDownloadFailure(meta, 'video', err) }
+    const f = downloadFailedSuffix(failed)
+    return { text: caption ? `[Video${f}] ${caption}` : `[Video received${f}]`, meta }
   }
 
   // Sticker
@@ -3325,7 +3396,7 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'download_attachment',
-      description: 'Download a media attachment from a received message to local inbox.',
+      description: 'Get a received media attachment in the local inbox. Pass attachment_path to confirm a file that was already downloaded, or message_id to (re)download the media of a stored message — use this when the inbound said "download failed" (meta.attachment_download_failed).',
       inputSchema: {
         type: 'object' as const,
         properties: {
@@ -3333,8 +3404,15 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
             type: 'string',
             description: 'The attachment path from message meta (meta.attachment_path or meta.image_path)',
           },
+          message_id: {
+            type: 'string',
+            description: 'ID of a received media message (meta.message_id). Downloads its media again from WhatsApp and saves it to the inbox.',
+          },
+          requestEnvelopeToken: {
+            type: 'string',
+            description: 'Optional. Forward meta.requestEnvelopeToken from the inbound that triggered this call (used with message_id).',
+          },
         },
-        required: ['attachment_path'],
       },
     },
     {
@@ -4239,6 +4317,52 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
 
     case 'download_attachment': {
       const { attachment_path } = args
+      const retryMessageId = (args as any).message_id as string | undefined
+
+      // Retry path: download the media again from the cached raw message.
+      if (retryMessageId && !attachment_path) {
+        if (typeof retryMessageId !== 'string') throw new Error('message_id must be a string')
+        if (!sock) throw new Error('WhatsApp is not connected')
+        if (!isDbReady()) {
+          return { content: [{ type: 'text', text: 'Local message store not available — cannot retry the download.' }] }
+        }
+        // Same scoping as forward_message: only messages from chats the caller can read.
+        const envelopeToken = extractEnvelopeToken(args as Record<string, unknown>)
+        const accessForDl = loadAccess()
+        const lookupChatIds = currentScopedAllowedChats(accessForDl, envelopeToken)
+          ?? [...accessForDl.allowFrom, ...Object.keys(accessForDl.groups)]
+        const rawMessage = getRawMessage(retryMessageId, lookupChatIds)
+        if (!rawMessage) {
+          throw new Error(`No cached raw message for \`${retryMessageId}\` in the chats you can read.`)
+        }
+        if (rawMessage?.key?.remoteJid) assertReadable(rawMessage.key.remoteJid, envelopeToken)
+        const media = findMediaNode(reviveStoredMessage(rawMessage).message)
+        if (!media) {
+          return { content: [{ type: 'text', text: `Message ${retryMessageId} has no downloadable media.` }] }
+        }
+        let buffer: Buffer
+        try {
+          buffer = await downloadInboundMedia(rawMessage)
+        } catch (err: any) {
+          syslog(`download_attachment retry failed for ${retryMessageId}: ${err}`)
+          return { content: [{ type: 'text', text: `Download failed again: ${err?.message ?? err}. The media may have expired on WhatsApp's servers — ask the sender to resend it.` }], isError: true }
+        }
+        const filepath = inboxPathForMedia(media.type, media.node)
+        fs.writeFileSync(filepath, buffer)
+        const out = [{ type: 'text', text: `File available at: ${filepath}` }]
+        if (media.type === 'audio' && transcriber) {
+          try {
+            out.push({ type: 'text', text: `Transcription: ${await transcriber.transcribe(buffer)}` })
+          } catch (err) {
+            syslog(`transcription failed: ${err}`)
+          }
+        }
+        return { content: out }
+      }
+
+      if (!attachment_path || typeof attachment_path !== 'string') {
+        throw new Error('attachment_path or message_id is required')
+      }
       const resolved = path.resolve(attachment_path)
 
       // Only allow access to files inside the inbox directory

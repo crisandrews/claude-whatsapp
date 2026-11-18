@@ -59,12 +59,26 @@ Claude is instructed (via the MCP server's `instructions`) to use `download_atta
 
 ---
 
+## When a download fails
+
+Media is fetched from WhatsApp's CDN when the message arrives. Each download gets up to 3 attempts with a short backoff; an attempt is abandoned when the connection drops, when no data arrives for 30 seconds, or when the received bytes fail the integrity check. If WhatsApp answers 404/410 (media expired), the plugin asks the sender's device to re-upload it and tries again.
+
+If every attempt fails, the message is **not** dropped:
+
+1. It is indexed in `messages.db` like any other inbound.
+2. The notification still reaches Claude, with the failure spelled out: `[Voice message received — download failed; use download_attachment to retry]` (same suffix for images, videos and documents) and `attachment_download_failed="true"` in meta. `attachment_path` / `image_path` are absent.
+3. `logs/system.log` records each failed attempt and the final `audio download failed: …` line.
+
+Claude can then call `download_attachment` with the message's `message_id` to retry from the cached raw message — see [docs/tools.md#download_attachment](tools.md#download_attachment).
+
+---
+
 ## The 50 MB inbound cap
 
 The constant `MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024` guards the download step for images, videos, documents, and audio. When an inbound file exceeds it:
 
 1. The download is aborted with an error.
-2. A line lands in `<channel-dir>/logs/system.log`: `image download failed: Error: File too large` (or `media download failed` / `audio download failed` depending on kind).
+2. A line lands in `<channel-dir>/logs/system.log`: `image download failed: MediaDownloadError: File too large …` (or `video` / `document` / `audio download failed` depending on kind). Oversized files are not retried and carry no retry marker.
 3. The placeholder text still reaches Claude (`[Image received]`, etc.), but without `image_path` / `attachment_path` in meta.
 
 **This is an inbound cap only.** `reply` with a `file_path` has no equivalent size check — outbound sends go straight through Baileys, and WhatsApp's own server-side limit (~100 MB for documents) is what governs there. If that matters for your workflow, add your own check before calling `reply`.

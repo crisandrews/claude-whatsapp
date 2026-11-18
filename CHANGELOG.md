@@ -8,6 +8,12 @@ _Draft for v1.23.0 — versions not bumped yet._
 
 Adding someone to the DM allowlist was terminal-only: the owner had to reach a console to let a new person talk to the agent, even for a one-off ("let Diego message you this week"). This release adds **owner-approved, time-limited contact requests**, opt-in and off by default. The owner tells the agent "enable Diego, +56 9 …"; the agent can only *request* it, the plugin — never the agent — asks the owner on WhatsApp, and a 👍 from the owner's own phone grants Diego DM access that expires by itself. The LLM stays out of the trust path exactly like the permission relay and the owner-DM `!access` commands.
 
+### Fixes
+
+- Inbound media: a voice note (or any attachment) whose download broke mid-transfer was lost without a trace — never stored in `messages.db`, never delivered to the agent, with only `uncaught exception: TypeError: terminated` in `logs/system.log`. The media stream handed out by Baileys does not propagate a socket close on the HTTP body, so the error escaped as an uncaught exception while the download never finished and the inbound handler never returned. Downloads now go through the plugin's own fetch-and-decrypt path (`media-download.ts`), where every failure is a catchable rejection: up to 3 attempts with short backoff, a 30-second stall timeout, an integrity check (`fileEncSha256` / MAC) so a truncated body is retried instead of saved, and a re-upload request when the media expired (HTTP 404/410).
+- Inbound media: when the download still fails, the message is stored and delivered anyway, marked `download failed; use download_attachment to retry` in the text and `attachment_download_failed="true"` in meta.
+- Inbound: a message that throws while being processed can no longer stop the other messages of the same batch, and uncaught exceptions are logged with their stack.
+
 ### Changes
 
 - **New MCP tool `request_contact_access`** `{ phone, label, reason, days? }`. Files an in-memory pending request (valid 24 h) and sends each owner DM a plugin-authored prompt (`🔐 Access request` / `🔐 Solicitud de acceso`, en/es). Returns `{ status: "pending", request_id, expires_at }`, or a clear status instead (`disabled`, `already_allowed`, `is_owner`, `is_self`, `rate_limited`, `no_owner`, `self_chat_owner`, `dm_disabled`, …). Strict E.164 input (8–15 digits; JIDs and group ids rejected), `days` clamped to the owner's `maxDays` (default 14, hard cap 30), at most 3 pending and 10 per rolling 24 h. The agent's `label` and `reason` are sanitized (control, bidi and zero-width characters, newlines, WhatsApp formatting; ≤ 40 / ≤ 200 chars; labels can't carry phone numbers) and the prompt always shows the plugin-normalized number.
@@ -18,6 +24,7 @@ Adding someone to the DM allowlist was terminal-only: the owner had to reach a c
 - **Owner switch, no console needed.** `/whatsapp:access contact-requests on|off|status|list|revoke <phone|all> [en|es]` in the terminal, or `!access contact-requests …` from the owner's 1:1 DM — handled natively, consumed, owner-only by JID. Deliberately **not** behind the `dm-mutations` two-factor (documented trade-off in SECURITY.md); every other `!access` subcommand keeps its existing gate and behavior.
 - `react`, `edit_message` and `delete_message` refuse plugin-authored contact prompts, so the agent can't rewrite the number the owner is approving.
 - `access.json` schema (additive, optional): `contactRequests { enabled, locale?, defaultDays?, maxDays? }` and `temporaryAllow[]`. The access skill now preserves both keys, promotes a temporarily granted JID to permanent on `allow` / `pair`, and removes it on `revoke`.
+- `download_attachment`: new `message_id` argument that downloads the media of a stored message again (scoped to the chats the caller can read) and saves it to the inbox; voice notes are transcribed when transcription is enabled. `attachment_path` keeps working as before.
 
 ## [1.22.0] — 2026-11-15
 

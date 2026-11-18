@@ -210,17 +210,23 @@ Send a tappable poll. WhatsApp renders it as a list with live vote tallies.
 
 ## `download_attachment`
 
-Confirm a media file exists and report its absolute path. Used by Claude when it needs to read an inbound attachment.
+Confirm a media file exists and report its absolute path, or download the media of a stored message again. Used by Claude when it needs to read an inbound attachment.
 
-**Arguments**
+**Arguments** — pass one of the two
 
 | Field | Required | Notes |
 |---|---|---|
-| `attachment_path` | ✅ | Must already be inside `<channel-dir>/inbox/`. |
+| `attachment_path` | one of | Must already be inside `<channel-dir>/inbox/`. |
+| `message_id` | one of | ID of a received media message. Re-downloads its media from the raw message cached in `messages.db` (3 attempts, re-upload request if the media expired) and saves it to the inbox. Limited to chats inside the caller's history scope. |
+| `requestEnvelopeToken` | — | Forward `meta.requestEnvelopeToken` when calling with `message_id` from a channel-originated turn. |
 
 **Return**
 
-Either `File available at: <abs path>` or `File not found at: <abs path>`.
+Either `File available at: <abs path>` or `File not found at: <abs path>`. With `message_id`: `File available at: <abs path>` (plus `Transcription: …` for audio when transcription is enabled), or `Download failed again: <reason>`.
+
+**When to use `message_id`**
+
+An inbound whose media could not be fetched arrives as `[Voice message received — download failed; use download_attachment to retry]` with `attachment_download_failed="true"` and no `attachment_path` in meta. Call `download_attachment` with that message's `message_id` to try again.
 
 **Worked example**
 
