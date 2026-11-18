@@ -17,7 +17,7 @@ Reference for every WhatsApp tool the plugin exposes to Claude — arguments, re
 
 **Group lifecycle** — [`create_group`](#create_group) · [`join_group`](#join_group) · [`get_invite_code`](#get_invite_code) · [`revoke_invite_code`](#revoke_invite_code)
 
-**Contacts** — [`check_number_exists`](#check_number_exists) · [`get_business_profile`](#get_business_profile) · [`block_contact`](#block_contact) · [`unblock_contact`](#unblock_contact)
+**Contacts** — [`check_number_exists`](#check_number_exists) · [`get_business_profile`](#get_business_profile) · [`block_contact`](#block_contact) · [`unblock_contact`](#unblock_contact) · [`request_contact_access`](#request_contact_access) · [`revoke_contact_access`](#revoke_contact_access)
 
 **Profile self-mgmt** — [`update_profile_name`](#update_profile_name) · [`update_profile_status`](#update_profile_status) · [`update_profile_picture`](#update_profile_picture) · [`remove_profile_picture`](#remove_profile_picture) · [`update_privacy`](#update_privacy)
 
@@ -688,6 +688,60 @@ Claude calls `unblock_contact` with Juan's JID (the user must know the JID, or l
 
 - **Unblocking restores WhatsApp delivery, not the plugin's access gate.** If the contact was never on the allowlist, their messages will still be dropped by the plugin even after unblocking. Pair with `/whatsapp:access pair <code>` or `allow <jid>` to fully restore them.
 - **Logged** to `logs/system.log` as `unblock_contact: unblocked <jid>`.
+
+---
+
+## `request_contact_access`
+
+Ask the **owner** to let a phone number DM the agent for a limited time. The agent can only request: the plugin sends the owner its own prompt and only the owner's 👍/👎 (or `approve <id>` / `deny <id>`) on that prompt decides. Off unless the owner turned contact requests on — see [docs/access.md#contact-requests-owner-approved-temporary-access](access.md#contact-requests-owner-approved-temporary-access).
+
+**Arguments**
+
+| Field | Required | Notes |
+|---|---|---|
+| `phone` | ✅ | E.164 with country code (`+56912345678`; spaces / dashes OK). Not a JID, not a group id. 8–15 digits. |
+| `label` | ✅ | Short display name for the prompt (≤ 40 chars, a name — more than 4 digits is refused). Shown as context only. |
+| `reason` | ✅ | Why (≤ 200 chars). Shown to the owner. |
+| `days` | | Duration; defaults to the owner's `defaultDays` (7), clamped to `maxDays` (default 14, hard cap 30). |
+
+**Return**
+
+JSON. `{"status":"pending","request_id":"kxqzbt","expires_at":"…","phone":"+56912345678","days":7}` when the prompt went out (`duplicate: true` if one was already pending for that number). Otherwise one of: `disabled`, `not_ready`, `self_chat_owner`, `dm_disabled`, `no_owner`, `is_self`, `is_owner`, `already_allowed`, `rate_limited` (with `retry_after_seconds`), `send_failed` — each with a `message`. Invalid input throws.
+
+The outcome arrives later as a `source="system"` channel notification with `meta.kind="contact_request"`, `meta.request_id`, `meta.phone`, `meta.outcome` (`approved`, `denied`, `expired`, `cancelled`, `refused`, `already_allowed`, later `grant_expired` / `grant_revoked`) and `meta.expires_at`.
+
+**Worked example**
+
+> *Owner, on WhatsApp: "habilita a Diego, +56 9 1234 5678, por la reunión del lunes"*
+
+Claude calls `request_contact_access` with `phone: "+56 9 1234 5678"`, `label: "Diego"`, `reason: "Coordinar la reunión del lunes"`, then tells the owner the request is waiting for their approval. When the `approved` notification arrives, Diego can DM the agent until `expires_at`.
+
+**Pitfalls**
+
+- **Never claim access before `outcome="approved"`.** Reacting to or replying to the prompt yourself does nothing — anything the bot sends is `fromMe` and never counts, and `react` / `edit_message` / `delete_message` refuse the prompt.
+- **Limits:** 3 pending, 10 per rolling 24 h, requests expire after 24 h. Pending requests live in memory and are lost on restart.
+- **Already allowed / owner / bot** numbers return a status instead of a request.
+
+---
+
+## `revoke_contact_access`
+
+Remove a **temporary** grant created through `request_contact_access` for a phone number, and cancel a pending request for it. Narrowing only — no approval needed.
+
+**Arguments**
+
+| Field | Required | Notes |
+|---|---|---|
+| `phone` | ✅ | E.164 with country code. |
+
+**Return**
+
+JSON: `{"status":"revoked"|"not_found","phone":"+56912345678","removed_grants":[{"request_id","expires_at","jids"}],"cancelled_request_id"?}`.
+
+**Pitfalls**
+
+- **Never touches permanent access.** Numbers allowed with `/whatsapp:access allow` / `pair`, owners and groups are out of its reach — use the terminal for those.
+- Works even while contact requests are turned off (revoking only narrows access).
 
 ---
 

@@ -12,6 +12,8 @@ Everything you need to let someone DM the bot, lock access down when you're done
 - [JID formats: `@s.whatsapp.net` vs `@lid`](#jid-formats-swhatsappnet-vs-lid)
 - [Edge cases & gotchas](#edge-cases--gotchas)
 - [Access DMs vs Access Groups](#access-dms-vs-access-groups)
+- [Owner-DM access commands (optional, default off)](#owner-dm-access-commands-optional-default-off)
+- [Contact requests (owner-approved, temporary access)](#contact-requests-owner-approved-temporary-access)
 
 ---
 
@@ -29,6 +31,7 @@ Everything you need to let someone DM the bot, lock access down when you're done
 | `/whatsapp:access set-owner <jid>` | Designate a JID as an owner (must already be allowlisted). |
 | `/whatsapp:access show-scope <chat>` | Print the effective history scope for a chat. |
 | `/whatsapp:access set-scope <chat> <own\|all\|csv>` | Configure which chats a chat can read. |
+| `/whatsapp:access contact-requests on\|off [en\|es]` | Let the agent *request* temporary DM access for a number; you approve each request from WhatsApp. See [Contact requests](#contact-requests-owner-approved-temporary-access). |
 
 DM state lives in `<channel-dir>/access.json`:
 
@@ -302,6 +305,45 @@ How it's kept safe:
   If either is missing, the feature stays off.
 
 Trade-off to understand before enabling: with it on, anyone who controls your WhatsApp (e.g. an unlocked phone) could add/remove groups via these commands. It's a convenience-vs-exposure choice — leave it off unless you specifically want phone-side group management.
+
+---
+
+## Contact requests (owner-approved, temporary access)
+
+Optional and **off by default**. Lets you give someone temporary DM access from your phone, with no terminal step and without the agent ever being able to grant it on its own.
+
+**Flow.**
+
+1. You (the owner) tell the agent: *"enable Diego, +56 9 1234 5678, he's coordinating Monday's meeting"*.
+2. The agent calls the `request_contact_access` tool (phone, label, reason, optional days). It can only **request**: the tool files a pending request in memory and returns `{ status: "pending", request_id, expires_at }`.
+3. The **plugin** sends your 1:1 DM its own prompt:
+   ```
+   🔐 *Solicitud de acceso*
+   Habilitar a *+56 9 1234 5678* («Diego») por 7 días.
+   Motivo: Coordinar la reunión del lunes
+   Reacciona 👍 para aprobar o 👎 para rechazar. Vence en 24 h.
+   O responde *aprobar kxqzbt* / *rechazar kxqzbt*.
+   ```
+   The number is rendered by the plugin from the normalized digits. The name and reason come from the agent: they are sanitized and shown only as context — always check the number.
+4. You react 👍 / ✅ (or reply `approve kxqzbt` / `aprobar kxqzbt`) to approve, 👎 / ❌ (or `deny` / `rechazar`) to refuse. The plugin replies `✅ Habilitado *+56 9 1234 5678* («Diego») hasta 21-nov 11:05.` and adds Diego's JIDs (`56912345678@s.whatsapp.net` and his `@lid` form) to `allowFrom`, recorded in `temporaryAllow`.
+5. The agent receives a system notification (`kind="contact_request"`, `outcome="approved"`, `expires_at`). When the grant expires, the plugin removes Diego's JIDs again and notifies the agent (`grant_expired`).
+
+**Turning it on.** Either:
+
+- terminal: `/whatsapp:access contact-requests on es` (or `en`), or
+- your 1:1 DM with the bot: `!access contact-requests on es`.
+
+No environment variable is needed. Other DM subcommands: `off`, `status`, `list` (active grants + pending requests), `revoke <phone>` / `revoke all`. Durations live in `access.json` → `contactRequests`: `defaultDays` (7) and `maxDays` (14, hard cap 30); set them from the terminal if you want different values.
+
+**Who can decide.** Only a JID in the live `ownerJids`, in a 1:1 DM, reacting to the plugin's prompt (or replying with its id). Refused: anything the bot itself sent (`fromMe`, which includes every agent `reply` / `react`), echoes of the bot's own account, group participants, allowlisted friends, and any decision while the bot's own identity isn't known yet. If your owner list includes the bot's own account (a self-chat setup), WhatsApp-side approvals are refused outright — the agent's messages couldn't be told apart from yours; use a separate owner number. The agent can't react to, edit or delete the prompt. First decision wins; a later 👎 on an approved prompt does **not** revoke — the plugin tells you so and shows the `revoke` command.
+
+**Limits.** Requests expire after 24 h. At most 3 pending and 10 per rolling 24 h (in memory; a restart resets them and drops pending requests — their prompts then do nothing). Grants are DM-only and never make anyone an owner; a number that's already permanently allowed, an owner, the bot itself, or a group can't be requested. Reactions made while the bot is disconnected arrive as offline messages and are ignored — react again or reply `approve <id>` once it's back.
+
+**JID forms.** The plugin resolves the `@lid` form through Baileys' LID mapping when the request is filed (and again on approval). If it can't, the first DM Diego sends under his `@lid` is bound to his grant using the `remoteJidAlt` attribute WhatsApp's server attaches to the message.
+
+**Interplay with the terminal.** `allow` or `pair` of a temporarily granted JID makes it permanent (the skill removes it from `temporaryAllow`); `revoke` removes it everywhere. Turning the feature off stops new requests and makes pending ones undecidable; active grants stay until they expire unless you revoke them.
+
+**Trade-off.** `!access contact-requests` is deliberately not behind the `dm-mutations` two-factor switch (zero console steps after install). Whoever controls your WhatsApp could turn it on and approve requests — but they can already command your agent as you, and grants are narrow and expire.
 
 ---
 
