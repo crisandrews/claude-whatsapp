@@ -11,6 +11,7 @@ import os from 'os'
 import { spawnSync } from 'child_process'
 import {
   splitJid,
+  stripJidDevice,
   matchesBot as matchesBotImpl,
   parsePermissionReply,
   acquireLock as acquireLockImpl,
@@ -1497,15 +1498,20 @@ async function connectWhatsAppInner() {
         if (status === 'offer') {
           const videoTag = c.isVideo ? 'video ' : ''
           syslog(`incoming ${videoTag}call: id=${c.id} from=${c.from}`)
-          const envelopeToken = setInboundContext(c.from, c.from)
+          // A call offer names the calling device (`123:33@lid`). The chat and
+          // sender identity must be the user JID, or it matches neither the
+          // allowlist nor ownerJids and the agent's reply to it is refused.
+          // `call_from` below stays raw: rejectCall routes on the device JID.
+          const callerJid = stripJidDevice(String(c.from))
+          const envelopeToken = setInboundContext(callerJid, callerJid)
           mcp.notification({
             method: 'notifications/claude/channel',
             params: {
-              content: `[Incoming ${videoTag}call from ${c.from}]`,
+              content: `[Incoming ${videoTag}call from ${callerJid}]`,
               meta: buildChannelMeta({
-                chatId: c.from,
+                chatId: callerJid,
                 messageId: `call-${c.id}`,
-                senderId: c.from,
+                senderId: callerJid,
                 ts: new Date().toISOString(),
                 access: loadAccess(),
                 envelopeToken,

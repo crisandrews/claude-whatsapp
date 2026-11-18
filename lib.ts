@@ -25,6 +25,17 @@ export function splitJid(jid: string | null | undefined): JidParts | null {
 }
 
 /**
+ * `123:4@lid` → `123@lid`: the JID without its `:device` part. Call offers
+ * name the calling DEVICE, while the allowlist, `ownerJids` and every chat id
+ * the tools accept name the USER, so a device-suffixed JID matches none of
+ * them. Anything that doesn't parse as a JID is returned unchanged.
+ */
+export function stripJidDevice(jid: string): string {
+  const parts = splitJid(jid)
+  return parts ? `${parts.local}@${parts.namespace}` : jid
+}
+
+/**
  * Returns true when `jid` resolves to the same identity as the bot. Strict:
  * does not bridge `@s.whatsapp.net` and `@lid` namespaces (cross-namespace
  * resolution would need a LID↔phone cache we don't have yet).

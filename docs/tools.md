@@ -1767,6 +1767,8 @@ meta:
   message_id: call-<call_id>
 ```
 
+`chat_id` and `user_id` carry the caller's user JID, the same one the allowlist uses. `call_from` is the JID exactly as WhatsApp reported it, which can include a device part (`12345678901234:33@lid`): pass it to `reject_call` unchanged and use `chat_id` for everything else.
+
 The agent can decide to call `reject_call` with those two meta fields, or simply ignore the notification (the call rings out / is answered elsewhere).
 
 **Arguments**
