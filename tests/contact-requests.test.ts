@@ -56,10 +56,10 @@ import {
   type TemporaryGrant,
   type ContactAccessView,
   type PendingContactRequest,
-} from '../contact-requests.js'
-import { parsePermissionReply } from '../lib.js'
-import { parseOwnerDmCommand, isOwnerDmCommandText } from '../access-helpers.js'
-import { buildChannelMeta } from '../channel-meta.js'
+} from '../contact-requests.ts'
+import { parsePermissionReply } from '../lib.ts'
+import { parseOwnerDmCommand, isOwnerDmCommandText } from '../access-helpers.ts'
+import { buildChannelMeta } from '../channel-meta.ts'
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -894,7 +894,9 @@ function sliceBetween(src: string, start: string, end: string): string {
 test('tripwire — inbound loop drops non-notify and fromMe before handleInbound', () => {
   const loop = sliceBetween(serverSrc, "sock.ev.on('messages.upsert'", 'await handleInbound(msg)')
   assert.match(loop, /if \(type !== 'notify'\) return/)
-  assert.match(loop, /if \(msg\.key\.fromMe\) continue/)
+  // The batch runs through forEachIsolated, so the per-message skip is a `return`
+  // from the callback rather than a `continue`.
+  assert.match(loop, /if \(msg\.key\.fromMe\) return/)
 })
 
 test('tripwire — agent tools cannot enable the feature, approve, or write permanent entries', () => {
