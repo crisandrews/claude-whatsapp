@@ -97,7 +97,7 @@ Field reference:
 | `groups` | `Record<jid, {requireMention, allowFrom, historyScope?}>` | Per-group config. Absence = group drops. `historyScope` defaults to `"own"` (sandboxed to self). |
 | `dms` | `Record<jid, {historyScope?}>` | Per-DM history scope overrides. Missing entry = `"own"`. |
 | `pending` | `Record<code, PendingEntry>` | Live pairing codes; expires after 1 hour. |
-| `contactRequests` | `{enabled, locale?, defaultDays?, maxDays?}` (optional) | Owner-approved contact requests. Absent or `enabled !== true` = off. *Since 1.22.0.* |
+| `contactRequests` | `{enabled, locale?, defaultDays?, maxDays?}` (optional) | Owner-approved contact requests. Absent or `enabled !== true` = off. *Since 1.23.0.* |
 | `temporaryAllow` | `Array<{jids, phone, label, reason, expiresAt, approvedAt, requestId, approvedBy?}>` (optional) | Temporary DM grants created only by an owner's WhatsApp approval. Each entry's `jids` are also in `allowFrom` and are removed by the server at `expiresAt` (ISO-8601). `label` / `reason` are agent-supplied, sanitized, unverified text. *Since 1.22.0.* |
 
 `historyScope` is `"own" \| "all" \| string[]`:

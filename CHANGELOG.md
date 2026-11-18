@@ -2,11 +2,13 @@
 
 ## [Unreleased]
 
-_Draft for v1.23.0 — versions not bumped yet._
+## [1.23.0] — 2026-11-18
 
 ### Why this release matters
 
 Adding someone to the DM allowlist was terminal-only: the owner had to reach a console to let a new person talk to the agent, even for a one-off ("let Diego message you this week"). This release adds **owner-approved, time-limited contact requests**, opt-in and off by default. The owner tells the agent "enable Diego, +56 9 …"; the agent can only *request* it, the plugin — never the agent — asks the owner on WhatsApp, and a 👍 from the owner's own phone grants Diego DM access that expires by itself. The LLM stays out of the trust path exactly like the permission relay and the owner-DM `!access` commands.
+
+It also closes a silent message loss: a voice note or attachment whose download broke mid-transfer vanished without reaching the agent or the local store. Downloads are now retried, and a message whose media still can't be fetched is delivered anyway with a marker the agent can act on. Replies now tell the agent which message they quote, and an incoming call is attributed to the caller rather than to the device they called from.
 
 ### Fixes
 
