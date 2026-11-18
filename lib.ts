@@ -402,3 +402,140 @@ export function describeContactCards(cards: Array<{ displayName?: string | null;
   const label = parts.length > 1 ? 'Contacts' : 'Contact'
   return { text: `[${label}: ${parts.join('; ') || 'empty card'}]`, phones }
 }
+
+// ---------------------------------------------------------------------------
+// Reply quotes — which message an inbound is replying to
+// ---------------------------------------------------------------------------
+// WhatsApp carries the quote in the replying message's own `contextInfo`
+// (`stanzaId`, `participant`, `quotedMessage`). All of it is SENDER-SUPPLIED:
+// a modified client can attach any id, author and text. It tells the agent
+// what the sender is pointing at; it is never proof of who said what.
+
+export const QUOTED_TEXT_MAX = 300
+export const QUOTE_PREFIX_MAX = 120
+
+export interface QuoteRef {
+  /** `contextInfo.stanzaId` — id of the quoted message. */
+  messageId: string
+  /** `contextInfo.participant` exactly as sent ('' when absent). */
+  participant: string
+  /** One-line, length-capped description of the quoted message ('' if unknown). */
+  text: string
+}
+
+function unwrapMessage(m: any): any {
+  let cur = m
+  for (let i = 0; i < 4 && cur; i++) {
+    const inner =
+      cur.ephemeralMessage?.message ||
+      cur.viewOnceMessage?.message ||
+      cur.viewOnceMessageV2?.message ||
+      cur.viewOnceMessageV2Extension?.message ||
+      cur.documentWithCaptionMessage?.message
+    if (!inner) break
+    cur = inner
+  }
+  return cur
+}
+
+/** One line, no control / format (bidi, zero-width) characters, at most `max`
+ *  code points — an ellipsis marks a cut. */
+export function clipOneLine(value: unknown, max: number): string {
+  if (typeof value !== 'string') return ''
+  const clean = value
+    .replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  const points = Array.from(clean)
+  if (points.length <= max) return clean
+  return points.slice(0, Math.max(0, max - 1)).join('').trimEnd() + '…'
+}
+
+/**
+ * Describe a quoted message body: its text, or a short tag for media plus the
+ * caption. `hasText` is false when there was nothing typed to show (a bare
+ * voice note, a sticker, an unknown type) — the caller may then look the
+ * message up in the local store, where e.g. a transcription lives.
+ */
+export function describeQuotedContent(message: unknown): { tag: string; text: string; hasText: boolean } {
+  const m = unwrapMessage(message)
+  const str = (v: unknown) => (typeof v === 'string' ? v : '')
+  const out = (tag: string, text: string) => ({ tag, text, hasText: text.trim().length > 0 })
+  if (!m || typeof m !== 'object') return out('', '')
+  if (str(m.conversation)) return out('', m.conversation)
+  if (m.extendedTextMessage) return out('', str(m.extendedTextMessage.text))
+  if (m.imageMessage) return out('[image]', str(m.imageMessage.caption))
+  if (m.videoMessage) return out('[video]', str(m.videoMessage.caption))
+  if (m.audioMessage) return out(m.audioMessage.ptt ? '[voice note]' : '[audio]', '')
+  if (m.documentMessage) {
+    const name = clipOneLine(str(m.documentMessage.fileName), 80)
+    return out(name ? `[document: ${name}]` : '[document]', str(m.documentMessage.caption))
+  }
+  if (m.stickerMessage) return out('[sticker]', '')
+  if (m.contactMessage || m.contactsArrayMessage) return out('[contact]', '')
+  if (m.locationMessage || m.liveLocationMessage) return out('[location]', '')
+  if (m.pollCreationMessage || m.pollCreationMessageV2 || m.pollCreationMessageV3) return out('[poll]', '')
+  return out('', '')
+}
+
+/** The `contextInfo` of a message, across the types that can carry a quote. */
+export function findContextInfo(message: unknown): any | null {
+  const m = unwrapMessage(message)
+  if (!m || typeof m !== 'object') return null
+  return (
+    m.extendedTextMessage?.contextInfo ||
+    m.imageMessage?.contextInfo ||
+    m.videoMessage?.contextInfo ||
+    m.audioMessage?.contextInfo ||
+    m.documentMessage?.contextInfo ||
+    m.stickerMessage?.contextInfo ||
+    null
+  )
+}
+
+/**
+ * The quote an inbound message carries, or null when it is not a reply.
+ * `lookupStoredText` is consulted only when the embedded quote has no text of
+ * its own (missing, or bare media): it receives the quoted message id and
+ * returns that message's text from the local store, if indexed.
+ */
+export function extractQuote(
+  message: unknown,
+  lookupStoredText?: (messageId: string) => string | null | undefined,
+): QuoteRef | null {
+  const ctx = findContextInfo(message)
+  if (!ctx || typeof ctx.stanzaId !== 'string' || !ctx.stanzaId) return null
+  const desc = describeQuotedContent(ctx.quotedMessage)
+  let body = desc.text
+  if (!desc.hasText && lookupStoredText) {
+    let stored = ''
+    try { stored = lookupStoredText(ctx.stanzaId) || '' } catch { stored = '' }
+    stored = stored.trim()
+    // The store's own placeholders ("[Voice message received]") add nothing
+    // over the tag we already have.
+    if (stored && !(desc.tag && /^\[[^\]]*\]$/.test(stored))) body = stored
+  }
+  const text = clipOneLine([desc.tag, body].filter((x) => x && x.trim()).join(' '), QUOTED_TEXT_MAX)
+  return {
+    messageId: ctx.stanzaId,
+    participant: typeof ctx.participant === 'string' ? ctx.participant : '',
+    text,
+  }
+}
+
+/** Meta fields for a quote. `quoted_from` is the author's user JID, or '' when
+ *  the quoted message is the bot's own (or the author is unknown). */
+export function quoteMeta(quote: QuoteRef, quotedIsOwn: boolean): Record<string, string> {
+  return {
+    quoted_message_id: quote.messageId,
+    quoted_from: quotedIsOwn || !quote.participant ? '' : stripJidDevice(quote.participant),
+    quoted_text: quote.text,
+  }
+}
+
+/** The one-line prefix put in front of the notification content. */
+export function quotePrefix(quote: QuoteRef, quotedIsOwn: boolean): string {
+  const who = quotedIsOwn ? 'Replying to your message' : 'Replying to'
+  const shown = clipOneLine(quote.text, QUOTE_PREFIX_MAX).replace(/"/g, "'")
+  return shown ? `[${who}: "${shown}"]` : `[${who === 'Replying to' ? 'Replying to an earlier message' : who}]`
+}

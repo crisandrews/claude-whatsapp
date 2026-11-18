@@ -59,6 +59,27 @@ Claude is instructed (via the MCP server's `instructions`) to use `download_atta
 
 ---
 
+## Replies to an earlier message
+
+When the sender replies to (quotes) a message, the notification says which one. This applies to text replies and to replies sent as an image, video, audio, document or sticker.
+
+- `content` starts with one extra line: `[Replying to: "<first 120 characters>"]`, or `[Replying to your message: "…"]` when the quoted message is the agent's own. The sender's text follows on the next line.
+- `meta` carries three fields:
+
+| Field | Value |
+|---|---|
+| `quoted_message_id` | ID of the quoted message — usable with `get_message_context`, or as `reply_to`. |
+| `quoted_from` | JID of the quoted message's author (user JID, no device part). Empty when it is the agent's own message. |
+| `quoted_text` | The quoted text, on one line, up to 300 characters. Media is shown as a tag plus its caption: `[image] the menu`, `[video]`, `[voice note]`, `[audio]`, `[document: quote.pdf]`, `[sticker]`. |
+
+When the quote has no text of its own (a voice note, for instance), the plugin looks the message up in `messages.db` for the same chat, so a transcribed voice note is quoted by its transcript: `[voice note] see you at the station at nine`.
+
+The prefix exists only in the notification: `messages.db` stores the text as the sender typed it, with the `quoted_*` fields in the row's meta. When several quick messages are batched into one notification, each reply keeps its own prefix line and `meta` describes the most recent quote.
+
+The quote is filled in by the sender's WhatsApp client. It shows what they are pointing at; it does not prove who wrote the quoted message or what it said.
+
+---
+
 ## When a download fails
 
 Media is fetched from WhatsApp's CDN when the message arrives. Each download gets up to 3 attempts with a short backoff; an attempt is abandoned when the connection drops, when no data arrives for 30 seconds, or when the received bytes fail the integrity check. If WhatsApp answers 404/410 (media expired), the plugin asks the sender's device to re-upload it and tries again.

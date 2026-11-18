@@ -251,6 +251,23 @@ export function indexMessage(msg: IndexedMessage): void {
   }
 }
 
+// Indexed text of a message (what the agent was shown: the body, a caption, a
+// voice-note transcription), or null when it isn't in the store. Constrained
+// to `allowedChatIds` for the same reason as getRawMessage below.
+export function getMessageText(message_id: string, allowedChatIds: string[]): string | null {
+  if (!dbInstance) return null
+  if (!message_id || allowedChatIds.length === 0) return null
+  try {
+    const placeholders = allowedChatIds.map(() => '?').join(',')
+    const row: any = dbInstance
+      .prepare(`SELECT text FROM messages WHERE id = ? AND chat_id IN (${placeholders}) LIMIT 1`)
+      .get(message_id, ...allowedChatIds)
+    return row && typeof row.text === 'string' ? row.text : null
+  } catch {
+    return null
+  }
+}
+
 // Returns the cached WAMessage proto for a message id, parsed back from JSON,
 // or null if the row predates raw_message caching (or doesn't exist). Callers
 // should treat null as "cannot forward this message".
